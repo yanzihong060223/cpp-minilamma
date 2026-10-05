@@ -61,13 +61,9 @@ static std::string NextUtf8Codepoint(const std::string& text, std::size_t& pos) 
     return result;
 }
 
-static void SkipWhitespace(const std::string& text, std::size_t& pos) {
+static std::string ParseString(const std::string& text, std::size_t& pos) {
     while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
            text[pos] == '\r' || text[pos] == '\n')) ++pos;
-}
-
-static std::string ParseString(const std::string& text, std::size_t& pos) {
-    SkipWhitespace(text, pos);
     if (pos == text.size() || text[pos++] != '"') {
         throw std::runtime_error("Expected a JSON string");
     }
@@ -77,32 +73,7 @@ static std::string ParseString(const std::string& text, std::size_t& pos) {
         if (byte == '"') return result;
         if (byte < 0x20) throw std::runtime_error("Unescaped JSON control character");
         if (byte != '\\') {
-            const auto start = pos - 1;
-            std::size_t length = 1;
-            if (byte >= 0x80) {
-                if (byte >= 0xC2 && byte <= 0xDF) length = 2;
-                else if (byte >= 0xE0 && byte <= 0xEF) length = 3;
-                else if (byte >= 0xF0 && byte <= 0xF4) length = 4;
-                else throw std::runtime_error("Invalid UTF-8 string");
-                if (length > text.size() - start) {
-                    throw std::runtime_error("Truncated UTF-8 string");
-                }
-                for (std::size_t i = 1; i < length; ++i) {
-                    const auto next = static_cast<unsigned char>(text[start + i]);
-                    if (next < 0x80 || next > 0xBF) {
-                        throw std::runtime_error("Invalid UTF-8 continuation byte");
-                    }
-                }
-                const auto second = static_cast<unsigned char>(text[start + 1]);
-                if ((byte == 0xE0 && second < 0xA0) ||
-                    (byte == 0xED && second >= 0xA0) ||
-                    (byte == 0xF0 && second < 0x90) ||
-                    (byte == 0xF4 && second >= 0x90)) {
-                    throw std::runtime_error("Invalid UTF-8 codepoint");
-                }
-            }
-            result.append(text, start, length);
-            pos = start + length;
+            result += static_cast<char>(byte);
             continue;
         }
         if (pos == text.size()) throw std::runtime_error("Truncated JSON escape");
@@ -160,7 +131,8 @@ static std::string ParseString(const std::string& text, std::size_t& pos) {
 }
 
 static int ParseInt(const std::string& text, std::size_t& pos) {
-    SkipWhitespace(text, pos);
+    while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+           text[pos] == '\r' || text[pos] == '\n')) ++pos;
     const auto start = pos;
     if (pos < text.size() && text[pos] == '-') ++pos;
     if (pos == text.size() || text[pos] < '0' || text[pos] > '9') {
@@ -176,15 +148,33 @@ static int ParseInt(const std::string& text, std::size_t& pos) {
     return id;
 }
 
+static std::vector<std::string> BuildBytesToUnicode() {
+    std::vector<std::string> map(256);
+    std::vector<int> bs;
+    for (int c = '!'; c <= '~'; ++c) bs.push_back(c);
+    for (int c = 0xA1; c <= 0xAC; ++c) bs.push_back(c);
+    for (int c = 0xAE; c <= 0xFF; ++c) bs.push_back(c);
+
+    std::vector<int> cs = bs;
+    int n = 0;
+    for (int b = 0; b < 256; ++b) {
+        if (std::find(bs.begin(), bs.end(), b) == bs.end()) {
+            bs.push_back(b);
+            cs.push_back(256 + n);
+            ++n;
+        }
+    }
+    for (std::size_t i = 0; i < bs.size(); ++i) {
+        map[bs[i]] = CodepointToUtf8(static_cast<char32_t>(cs[i]));
+    }
+    return map;
+}
+
 void BpeTokenizer::BuildByteMap() {
-    b2u_.resize(256);
+    b2u_ = BuildBytesToUnicode();
     u2b_.clear();
-    char32_t next = 256;
-    for (int byte = 0; byte < 256; ++byte) {
-        const bool direct = (byte >= 33 && byte <= 126) ||
-                            (byte >= 0xA1 && byte <= 0xAC) || byte >= 0xAE;
-        b2u_[byte] = CodepointToUtf8(direct ? static_cast<char32_t>(byte) : next++);
-        u2b_[b2u_[byte]] = static_cast<std::uint8_t>(byte);
+    for (int b = 0; b < 256; ++b) {
+        u2b_[b2u_[b]] = static_cast<std::uint8_t>(b);
     }
 }
 
@@ -194,196 +184,169 @@ bool BpeTokenizer::Load(const std::string& json_path, const std::string& merge_p
     pending.vocab_size_ = 0;
     pending.BOS_id_ = pending.EOS_id_ = pending.UNK_id_ = -1;
     pending.BuildByteMap();
-    std::ifstream vocab_file(json_path, std::ios::binary);
-    if (!vocab_file) throw std::runtime_error("Cannot open BPE vocabulary: " + json_path);
-    std::ostringstream vocab_buffer;
-    vocab_buffer << vocab_file.rdbuf();
-    if (vocab_file.bad()) throw std::runtime_error("Cannot read BPE vocabulary: " + json_path);
-    const auto text = vocab_buffer.str();
-    std::size_t pos = 0;
-    SkipWhitespace(text, pos);
-    if (pos == text.size() || (text[pos] != '{' && text[pos] != '[')) {
-        throw std::runtime_error("BPE vocabulary must be an object or entry array");
-    }
-    const bool array = text[pos++] == '[';
-    const char closing = array ? ']' : '}';
     std::unordered_set<int> seen_ids, special_ids;
-    SkipWhitespace(text, pos);
-    while (pos < text.size() && text[pos] != closing) {
-        int id = -1;
-        std::string token;
-        bool special = false;
-        if (array) {
-            if (text[pos++] != '{') throw std::runtime_error("Expected a BPE vocabulary entry");
-            std::unordered_set<std::string> fields;
-            bool found_context = false;
-            while (true) {
-                const auto key = ParseString(text, pos);
-                if (!fields.insert(key).second) throw std::runtime_error("Duplicate BPE field: " + key);
-                SkipWhitespace(text, pos);
-                if (pos == text.size() || text[pos++] != ':') {
-                    throw std::runtime_error("Missing BPE field colon");
-                }
-                if (key == "id") id = ParseInt(text, pos);
-                else if (key == "context") { token = ParseString(text, pos); found_context = true; }
-                else if (key == "special") {
-                    SkipWhitespace(text, pos);
-                    if (text.compare(pos, 4, "true") == 0) { special = true; pos += 4; }
-                    else if (text.compare(pos, 5, "false") == 0) pos += 5;
-                    else throw std::runtime_error("BPE special field must be boolean");
-                } else throw std::runtime_error("Unknown BPE vocabulary field: " + key);
-                SkipWhitespace(text, pos);
-                if (pos == text.size()) throw std::runtime_error("Truncated BPE vocabulary entry");
-                const char separator = text[pos++];
-                if (separator == '}') break;
-                if (separator != ',') throw std::runtime_error("Missing BPE field comma");
-            }
-            if (id < 0 || !found_context) throw std::runtime_error("Missing BPE ID or context");
-        } else {
-            token = ParseString(text, pos);
-            SkipWhitespace(text, pos);
-            if (pos == text.size() || text[pos++] != ':') {
+
+    // vocab.json: {"token": ID}
+    {
+        std::ifstream file(json_path, std::ios::binary);
+        if (!file) throw std::runtime_error("Cannot open BPE vocabulary: " + json_path);
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        if (file.bad()) throw std::runtime_error("Cannot read BPE vocabulary: " + json_path);
+        const auto content = buffer.str();
+        std::size_t pos = 0;
+        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+               content[pos] == '\r' || content[pos] == '\n')) ++pos;
+        if (pos == content.size() || content[pos++] != '{') {
+            throw std::runtime_error("BPE vocabulary must be an object");
+        }
+        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+               content[pos] == '\r' || content[pos] == '\n')) ++pos;
+        while (pos < content.size() && content[pos] != '}') {
+            const auto token = ParseString(content, pos);
+            while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+                   content[pos] == '\r' || content[pos] == '\n')) ++pos;
+            if (pos == content.size() || content[pos++] != ':') {
                 throw std::runtime_error("Missing BPE token colon");
             }
-            id = ParseInt(text, pos);
+            const int id = ParseInt(content, pos);
+            if (token.empty() || !pending.vocab_.emplace(token, id).second ||
+                !seen_ids.insert(id).second) {
+                throw std::runtime_error("Empty or duplicate BPE token or ID");
+            }
+            pending.vocab_size_ = std::max(pending.vocab_size_, id + 1);
+            while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+                   content[pos] == '\r' || content[pos] == '\n')) ++pos;
+            if (pos == content.size()) throw std::runtime_error("Truncated BPE vocabulary");
+            if (content[pos] == '}') break;
+            if (content[pos++] != ',') throw std::runtime_error("Missing BPE token comma");
+            while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+                   content[pos] == '\r' || content[pos] == '\n')) ++pos;
+            if (pos == content.size() || content[pos] == '}') {
+                throw std::runtime_error("Missing BPE token after comma");
+            }
         }
-        if (token.empty()) throw std::runtime_error("Empty BPE token");
-        if (!pending.vocab_.emplace(token, id).second || !seen_ids.insert(id).second) {
-            throw std::runtime_error("Duplicate BPE vocabulary token or ID");
+        if (pos == content.size() || content[pos++] != '}' || pending.vocab_.empty()) {
+            throw std::runtime_error("Incomplete or empty BPE vocabulary");
         }
-        pending.vocab_size_ = std::max(pending.vocab_size_, id + 1);
-        if (special || (token.size() >= 4 && token.compare(0, 2, "<|") == 0 &&
-                        token.compare(token.size() - 2, 2, "|>") == 0)) special_ids.insert(id);
-        SkipWhitespace(text, pos);
-        if (pos == text.size()) throw std::runtime_error("Truncated BPE vocabulary");
-        if (text[pos] == closing) break;
-        if (text[pos++] != ',') throw std::runtime_error("Missing BPE token comma");
-        SkipWhitespace(text, pos);
-        if (pos == text.size() || text[pos] == closing) {
-            throw std::runtime_error("Missing BPE token after comma");
+        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+               content[pos] == '\r' || content[pos] == '\n')) ++pos;
+        if (pos != content.size()) throw std::runtime_error("Unexpected trailing vocabulary data");
+
+        pending.id_to_token_.resize(static_cast<std::size_t>(pending.vocab_size_));
+        for (const auto& item : pending.vocab_) {
+            pending.id_to_token_[static_cast<std::size_t>(item.second)] = item.first;
+            if (item.first.size() >= 4 && item.first.compare(0, 2, "<|") == 0 &&
+                item.first.compare(item.first.size() - 2, 2, "|>") == 0) {
+                special_ids.insert(item.second);
+                pending.special_tokens.push_back(item);
+            }
         }
-    }
-    if (pos == text.size() || text[pos++] != closing || pending.vocab_.empty()) {
-        throw std::runtime_error("Incomplete or empty BPE vocabulary");
-    }
-    SkipWhitespace(text, pos);
-    if (pos != text.size()) throw std::runtime_error("Unexpected trailing BPE vocabulary data");
-    pending.id_to_token_.resize(static_cast<std::size_t>(pending.vocab_size_));
-    for (const auto& item : pending.vocab_) {
-        pending.id_to_token_[static_cast<std::size_t>(item.second)] = item.first;
     }
 
-    std::ifstream special_file(special_path, std::ios::binary);
-    if (!special_file) throw std::runtime_error("Cannot open special token file: " + special_path);
-    std::ostringstream special_buffer;
-    special_buffer << special_file.rdbuf();
-    if (special_file.bad()) throw std::runtime_error("Cannot read special token file: " + special_path);
-    const auto config = special_buffer.str();
-    pos = 0;
-    SkipWhitespace(config, pos);
-    if (pos == config.size() || config[pos++] != '{') {
-        throw std::runtime_error("Special token configuration must be an object");
-    }
-    std::unordered_set<std::string> fields;
-    SkipWhitespace(config, pos);
-    while (pos < config.size() && config[pos] != '}') {
-        const auto key = ParseString(config, pos);
-        if (!fields.insert(key).second) throw std::runtime_error("Duplicate special token field");
-        SkipWhitespace(config, pos);
-        if (pos == config.size() || config[pos++] != ':') {
-            throw std::runtime_error("Missing special token field colon");
-        }
-        if (key == "bos_id") pending.BOS_id_ = ParseInt(config, pos);
-        else if (key == "eos_id") pending.EOS_id_ = ParseInt(config, pos);
-        else if (key == "unk_id") pending.UNK_id_ = ParseInt(config, pos);
-        else if (key == "special_tokens") {
-            SkipWhitespace(config, pos);
-            if (pos == config.size() || config[pos++] != '[') {
-                throw std::runtime_error("special_tokens must be an array of strings");
+    // merges.txt: token1 token2; the line order is the rank.
+    {
+        std::ifstream file(merge_path);
+        if (!file) throw std::runtime_error("Cannot open BPE merge file: " + merge_path);
+        std::string line;
+        int rank = 0;
+        while (std::getline(file, line)) {
+            std::stringstream stream(line);
+            std::string first, second, trailing;
+            if (!(stream >> first) || first == "#version:") continue;
+            if (!(stream >> second) || (stream >> trailing)) {
+                throw std::runtime_error("Invalid BPE merge rule");
             }
-            SkipWhitespace(config, pos);
-            while (pos < config.size() && config[pos] != ']') {
-                const auto token = ParseString(config, pos);
-                const auto it = pending.vocab_.find(token);
-                if (it == pending.vocab_.end()) throw std::runtime_error("Unknown special token: " + token);
-                special_ids.insert(it->second);
-                SkipWhitespace(config, pos);
-                if (pos == config.size()) throw std::runtime_error("Truncated special_tokens array");
-                if (config[pos] == ']') break;
-                if (config[pos++] != ',') throw std::runtime_error("Missing special token comma");
-                SkipWhitespace(config, pos);
-                if (pos == config.size() || config[pos] == ']') {
-                    throw std::runtime_error("Missing special token after comma");
+            for (const auto& token : {first, second, first + second}) {
+                if (pending.vocab_.find(token) == pending.vocab_.end()) {
+                    throw std::runtime_error("BPE merge references a missing token");
                 }
             }
-            if (pos == config.size() || config[pos++] != ']') {
-                throw std::runtime_error("Missing special_tokens closing bracket");
+            if (rank == std::numeric_limits<int>::max() ||
+                !pending.merge_rank_.emplace(std::make_pair(first, second), rank).second) {
+                throw std::runtime_error("Duplicate or too many BPE merge rules");
             }
-        } else throw std::runtime_error("Unknown special token field: " + key);
-        SkipWhitespace(config, pos);
-        if (pos == config.size()) throw std::runtime_error("Truncated special token configuration");
-        if (config[pos] == '}') break;
-        if (config[pos++] != ',') throw std::runtime_error("Missing special token field comma");
-        SkipWhitespace(config, pos);
-        if (pos == config.size() || config[pos] == '}') {
-            throw std::runtime_error("Missing special token field after comma");
+            ++rank;
         }
+        if (file.bad()) throw std::runtime_error("Cannot read BPE merge file: " + merge_path);
     }
-    if (pos == config.size() || config[pos++] != '}') {
-        throw std::runtime_error("Missing special token configuration closing brace");
+
+    // special_tokens.json: bos_id, eos_id, unk_id.
+    {
+        std::ifstream file(special_path, std::ios::binary);
+        if (!file) throw std::runtime_error("Cannot open special token file: " + special_path);
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        if (file.bad()) throw std::runtime_error("Cannot read special token file: " + special_path);
+        const auto content = buffer.str();
+        std::size_t pos = 0;
+        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+               content[pos] == '\r' || content[pos] == '\n')) ++pos;
+        if (pos == content.size() || content[pos++] != '{') {
+            throw std::runtime_error("Special token configuration must be an object");
+        }
+        std::unordered_set<std::string> fields;
+        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+               content[pos] == '\r' || content[pos] == '\n')) ++pos;
+        while (pos < content.size() && content[pos] != '}') {
+            const auto key = ParseString(content, pos);
+            if (!fields.insert(key).second) throw std::runtime_error("Duplicate special ID field");
+            while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+                   content[pos] == '\r' || content[pos] == '\n')) ++pos;
+            if (pos == content.size() || content[pos++] != ':') {
+                throw std::runtime_error("Missing special ID colon");
+            }
+            const int id = ParseInt(content, pos);
+            if (key == "bos_id") pending.BOS_id_ = id;
+            else if (key == "eos_id") pending.EOS_id_ = id;
+            else if (key == "unk_id") pending.UNK_id_ = id;
+            else throw std::runtime_error("Unknown special ID field: " + key);
+            while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+                   content[pos] == '\r' || content[pos] == '\n')) ++pos;
+            if (pos == content.size()) throw std::runtime_error("Truncated special configuration");
+            if (content[pos] == '}') break;
+            if (content[pos++] != ',') throw std::runtime_error("Missing special ID comma");
+            while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+                   content[pos] == '\r' || content[pos] == '\n')) ++pos;
+            if (pos == content.size() || content[pos] == '}') {
+                throw std::runtime_error("Missing special ID after comma");
+            }
+        }
+        if (pos == content.size() || content[pos++] != '}') {
+            throw std::runtime_error("Missing special configuration closing brace");
+        }
+        while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+               content[pos] == '\r' || content[pos] == '\n')) ++pos;
+        if (pos != content.size()) throw std::runtime_error("Unexpected trailing special ID data");
     }
-    SkipWhitespace(config, pos);
-    if (pos != config.size()) throw std::runtime_error("Unexpected trailing special token data");
+
     if (pending.BOS_id_ == pending.EOS_id_ || pending.BOS_id_ == pending.UNK_id_ ||
         pending.EOS_id_ == pending.UNK_id_) throw std::runtime_error("Special IDs must be distinct");
     for (int id : {pending.BOS_id_, pending.EOS_id_, pending.UNK_id_}) {
-        if (seen_ids.count(id) == 0) throw std::runtime_error("Missing special token ID in BPE vocabulary");
-        special_ids.insert(id);
-    }
-    for (const auto& item : pending.vocab_) {
-        if (special_ids.count(item.second) != 0) {
-            pending.special_tokens.push_back(item);
-        } else {
-            std::size_t offset = 0;
-            while (offset < item.first.size()) {
-                const auto symbol = NextUtf8Codepoint(item.first, offset);
-                if (symbol.empty() || pending.u2b_.find(symbol) == pending.u2b_.end()) {
-                    throw std::runtime_error("BPE token contains an invalid byte symbol");
-                }
-            }
+        if (seen_ids.count(id) == 0) throw std::runtime_error("Special ID is missing from vocabulary");
+        if (special_ids.insert(id).second) {
+            pending.special_tokens.emplace_back(pending.id_to_token_[id], id);
         }
     }
     std::sort(pending.special_tokens.begin(), pending.special_tokens.end(),
-              [](const auto& a, const auto& b) {
-                  if (a.first.size() != b.first.size()) return a.first.size() > b.first.size();
-                  return a.first < b.first;
-              });
-
-    std::ifstream merge_file(merge_path);
-    if (!merge_file) throw std::runtime_error("Cannot open BPE merge file: " + merge_path);
-    std::string line;
-    while (std::getline(merge_file, line)) {
-        std::istringstream fields_in_line(line);
-        std::string first, second, trailing;
-        if (!(fields_in_line >> first) || first == "#version:") continue;
-        if (!(fields_in_line >> second) || (fields_in_line >> trailing)) {
-            throw std::runtime_error("Invalid BPE merge rule");
-        }
-        for (const auto& token : {first, second, first + second}) {
-            const auto it = pending.vocab_.find(token);
-            if (it == pending.vocab_.end() || special_ids.count(it->second) != 0) {
-                throw std::runtime_error("BPE merge must reference ordinary vocabulary tokens");
+              [](const auto& a, const auto& b) { return a.first.size() > b.first.size(); });
+    for (const auto& item : pending.vocab_) {
+        if (special_ids.count(item.second) != 0) continue;
+        std::size_t pos = 0;
+        while (pos < item.first.size()) {
+            const auto symbol = NextUtf8Codepoint(item.first, pos);
+            if (symbol.empty() || pending.u2b_.find(symbol) == pending.u2b_.end()) {
+                throw std::runtime_error("BPE token contains an invalid byte symbol");
             }
         }
-        if (pending.merge_rank_.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            throw std::runtime_error("Too many BPE merge rules");
-        }
-        const int rank = static_cast<int>(pending.merge_rank_.size());
-        if (!pending.merge_rank_.emplace(std::make_pair(first, second), rank).second) {
-            throw std::runtime_error("Duplicate BPE merge rule");
+    }
+    for (const auto& item : pending.merge_rank_) {
+        if (special_ids.count(pending.vocab_.at(item.first.first)) != 0 ||
+            special_ids.count(pending.vocab_.at(item.first.second)) != 0 ||
+            special_ids.count(pending.vocab_.at(item.first.first + item.first.second)) != 0) {
+            throw std::runtime_error("BPE merge must reference ordinary vocabulary tokens");
         }
     }
-    if (merge_file.bad()) throw std::runtime_error("Cannot read BPE merge file: " + merge_path);
     *this = std::move(pending);
     return true;
 }

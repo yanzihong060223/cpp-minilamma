@@ -11,13 +11,9 @@
 
 namespace yan_lamma {
 
-static void SkipWhitespace(const std::string& text, std::size_t& pos) {
+static std::string ParseString(const std::string& text, std::size_t& pos) {
     while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
            text[pos] == '\r' || text[pos] == '\n')) ++pos;
-}
-
-static std::string ParseString(const std::string& text, std::size_t& pos) {
-    SkipWhitespace(text, pos);
     if (pos == text.size() || text[pos++] != '"') {
         throw std::runtime_error("Expected a JSON string");
     }
@@ -27,32 +23,7 @@ static std::string ParseString(const std::string& text, std::size_t& pos) {
         if (byte == '"') return result;
         if (byte < 0x20) throw std::runtime_error("Unescaped JSON control character");
         if (byte != '\\') {
-            const auto start = pos - 1;
-            std::size_t length = 1;
-            if (byte >= 0x80) {
-                if (byte >= 0xC2 && byte <= 0xDF) length = 2;
-                else if (byte >= 0xE0 && byte <= 0xEF) length = 3;
-                else if (byte >= 0xF0 && byte <= 0xF4) length = 4;
-                else throw std::runtime_error("Invalid UTF-8 string");
-                if (length > text.size() - start) {
-                    throw std::runtime_error("Truncated UTF-8 string");
-                }
-                for (std::size_t i = 1; i < length; ++i) {
-                    const auto next = static_cast<unsigned char>(text[start + i]);
-                    if (next < 0x80 || next > 0xBF) {
-                        throw std::runtime_error("Invalid UTF-8 continuation byte");
-                    }
-                }
-                const auto second = static_cast<unsigned char>(text[start + 1]);
-                if ((byte == 0xE0 && second < 0xA0) ||
-                    (byte == 0xED && second >= 0xA0) ||
-                    (byte == 0xF0 && second < 0x90) ||
-                    (byte == 0xF4 && second >= 0x90)) {
-                    throw std::runtime_error("Invalid UTF-8 codepoint");
-                }
-            }
-            result.append(text, start, length);
-            pos = start + length;
+            result += static_cast<char>(byte);
             continue;
         }
         if (pos == text.size()) throw std::runtime_error("Truncated JSON escape");
@@ -124,7 +95,8 @@ static std::string ParseString(const std::string& text, std::size_t& pos) {
 }
 
 static int ParseInt(const std::string& text, std::size_t& pos) {
-    SkipWhitespace(text, pos);
+    while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+           text[pos] == '\r' || text[pos] == '\n')) ++pos;
     const auto start = pos;
     if (pos < text.size() && text[pos] == '-') ++pos;
     if (pos == text.size() || text[pos] < '0' || text[pos] > '9') {
@@ -141,7 +113,8 @@ static int ParseInt(const std::string& text, std::size_t& pos) {
 }
 
 static bool ParseBool(const std::string& text, std::size_t& pos) {
-    SkipWhitespace(text, pos);
+    while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+           text[pos] == '\r' || text[pos] == '\n')) ++pos;
     if (text.compare(pos, 4, "true") == 0) { pos += 4; return true; }
     if (text.compare(pos, 5, "false") == 0) { pos += 5; return false; }
     throw std::runtime_error("Expected a JSON boolean");
@@ -155,14 +128,16 @@ JsonVocabTokenizer::JsonVocabTokenizer(const std::string& path_name) {
     if (file.bad()) throw std::runtime_error("Cannot read vocabulary: " + path_name);
     const auto text = buffer.str();
     std::size_t pos = 0;
-    SkipWhitespace(text, pos);
+    while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+           text[pos] == '\r' || text[pos] == '\n')) ++pos;
     if (pos == text.size() || text[pos++] != '[') {
         throw std::runtime_error("JSON vocabulary must be an array");
     }
     std::unordered_set<int> seen_ids;
     std::unordered_set<std::string> seen_tokens;
     bool found_bos = false, found_eos = false, found_unk = false;
-    SkipWhitespace(text, pos);
+    while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+           text[pos] == '\r' || text[pos] == '\n')) ++pos;
     while (pos < text.size() && text[pos] != ']') {
         if (text[pos++] != '{') throw std::runtime_error("Expected a vocabulary entry");
         int id = -1;
@@ -172,7 +147,8 @@ JsonVocabTokenizer::JsonVocabTokenizer(const std::string& path_name) {
         while (true) {
             const auto key = ParseString(text, pos);
             if (!fields.insert(key).second) throw std::runtime_error("Duplicate field: " + key);
-            SkipWhitespace(text, pos);
+            while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+                   text[pos] == '\r' || text[pos] == '\n')) ++pos;
             if (pos == text.size() || text[pos++] != ':') {
                 throw std::runtime_error("Missing vocabulary field colon");
             }
@@ -180,7 +156,8 @@ JsonVocabTokenizer::JsonVocabTokenizer(const std::string& path_name) {
             else if (key == "context") { token = ParseString(text, pos); found_context = true; }
             else if (key == "special") special = ParseBool(text, pos);
             else throw std::runtime_error("Unknown vocabulary field: " + key);
-            SkipWhitespace(text, pos);
+            while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+                   text[pos] == '\r' || text[pos] == '\n')) ++pos;
             if (pos == text.size()) throw std::runtime_error("Truncated vocabulary entry");
             const char separator = text[pos++];
             if (separator == '}') break;
@@ -198,11 +175,13 @@ JsonVocabTokenizer::JsonVocabTokenizer(const std::string& path_name) {
         entry_.push_back(VocabEntry{id, token, special});
         context_id_.emplace_back(token, id);
         vocab_size_ = std::max(vocab_size_, id + 1);
-        SkipWhitespace(text, pos);
+        while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+               text[pos] == '\r' || text[pos] == '\n')) ++pos;
         if (pos == text.size()) throw std::runtime_error("Truncated vocabulary array");
         if (text[pos] == ']') break;
         if (text[pos++] != ',') throw std::runtime_error("Missing vocabulary entry comma");
-        SkipWhitespace(text, pos);
+        while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+               text[pos] == '\r' || text[pos] == '\n')) ++pos;
         if (pos == text.size() || text[pos] == ']') {
             throw std::runtime_error("Missing vocabulary entry after comma");
         }
@@ -210,7 +189,8 @@ JsonVocabTokenizer::JsonVocabTokenizer(const std::string& path_name) {
     if (pos == text.size() || text[pos++] != ']') {
         throw std::runtime_error("Missing vocabulary closing bracket");
     }
-    SkipWhitespace(text, pos);
+    while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
+           text[pos] == '\r' || text[pos] == '\n')) ++pos;
     if (pos != text.size()) throw std::runtime_error("Unexpected trailing vocabulary data");
     if (!found_bos || !found_eos || !found_unk) {
         throw std::runtime_error("JSON vocabulary requires <BOS>, <EOS>, and <UNK>");
@@ -236,22 +216,7 @@ std::vector<int> JsonVocabTokenizer::Encode(const std::string& text) const {
         }
         if (!matched) {
             result.push_back(UNK_id_);
-            const auto first = static_cast<unsigned char>(text[pos]);
-            std::size_t length = 1;
-            if (first >= 0xC2 && first <= 0xDF) length = 2;
-            else if (first >= 0xE0 && first <= 0xEF) length = 3;
-            else if (first >= 0xF0 && first <= 0xF4) length = 4;
-            if (length > text.size() - pos) length = 1;
-            for (std::size_t i = 1; i < length; ++i) {
-                const auto byte = static_cast<unsigned char>(text[pos + i]);
-                if (byte < 0x80 || byte > 0xBF) { length = 1; break; }
-            }
-            if (length > 1) {
-                const auto second = static_cast<unsigned char>(text[pos + 1]);
-                if ((first == 0xE0 && second < 0xA0) || (first == 0xED && second >= 0xA0) ||
-                    (first == 0xF0 && second < 0x90) || (first == 0xF4 && second >= 0x90)) length = 1;
-            }
-            pos += length;
+            ++pos;
         }
     }
     result.push_back(EOS_id_);

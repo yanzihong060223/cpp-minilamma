@@ -47,12 +47,11 @@ const char* kBpeVocabulary = R"json({
     "\u00E4":23,"\u00B8":24,"\u0143":25,
     "\u00F0":26,"\u0141":27,"\u013A":28,"\u0122":29,
     "\u0121":30,"\u00FF":31,
-    "<tag>":32,"<tag>long":33,"<|im_start|>":34
+    "<|tag|>":32,"<|tag|>long|>":33,"<|im_start|>":34
 })json";
 
 const char* kBpeSpecials = R"json({
-    "bos_id":0,"eos_id":1,"unk_id":2,
-    "special_tokens":["<tag>","<tag>long"]
+    "bos_id":0,"eos_id":1,"unk_id":2
 })json";
 
 const char* kBpeMerges = "#version: 0.2\nh e\nhe l\nhel l\nhell o\nb c\na b\n";
@@ -177,12 +176,19 @@ TEST_F(TokenizerFiles, JsonHandlesEveryEscapeChineseEmojiAndEmbeddedNul) {
     EXPECT_EQ(tokenizer.Decode(ids), text);
     EXPECT_EQ(tokenizer.DecodeToken(15), u8"\u4E2D");
     EXPECT_EQ(tokenizer.DecodeToken(16), u8"\U0001F600");
+    const auto raw_path = Write("raw-byte.json",
+        R"([{"id":0,"context":"<BOS>"},{"id":1,"context":"<EOS>"},{"id":2,"context":"<UNK>"},{"id":3,"context":")" +
+        std::string(1, '\xFF') + R"("}])");
+    const JsonVocabTokenizer raw_tokenizer(raw_path);
+    EXPECT_EQ(EncodeContent(raw_tokenizer, std::string(1, '\xFF')),
+              (std::vector<int>{3}));
+    EXPECT_EQ(raw_tokenizer.Decode({3}), std::string(1, '\xFF'));
 }
 
-TEST_F(TokenizerFiles, JsonUnkIsOnePerUnicodeScalarOrMalformedByte) {
+TEST_F(TokenizerFiles, JsonUnkIsOnePerUnmatchedByte) {
     const JsonVocabTokenizer tokenizer(JsonPath());
     EXPECT_EQ(EncodeContent(tokenizer, u8"\u4E2D\u6587\U0001F642"),
-              (std::vector<int>{15, 2, 2}));
+              (std::vector<int>{15, 2, 2, 2, 2, 2, 2, 2}));
     EXPECT_EQ(EncodeContent(tokenizer, std::string("\xC0\xAF\xF0\x9F", 4)),
               (std::vector<int>{2, 2, 2, 2}));
 }
@@ -244,8 +250,6 @@ std::vector<std::string> InvalidJsonDocuments() {
         documents.push_back(prefix + entry + "]");
     }
     documents.push_back(prefix + "{\"id\":3,\"context\":\"a\nb\"}]");
-    documents.push_back(prefix + "{\"id\":3,\"context\":\"" +
-                        std::string(1, '\xFF') + "\"}]");
     return documents;
 }
 
@@ -292,13 +296,13 @@ TEST_F(TokenizerFiles, BpeSpecialsUseLongestMatchAndDoNotMergeAcrossMarkers) {
     WriteBpe();
     BpeTokenizer tokenizer;
     LoadBpe(tokenizer);
-    EXPECT_EQ(EncodeContent(tokenizer, "<tag>long<|im_start|><tag>h"),
+    EXPECT_EQ(EncodeContent(tokenizer, "<|tag|>long|><|im_start|><|tag|>h"),
               (std::vector<int>{33, 34, 32, 3}));
-    EXPECT_EQ(EncodeContent(tokenizer, "a<tag>b"),
+    EXPECT_EQ(EncodeContent(tokenizer, "a<|tag|>b"),
               (std::vector<int>{11, 32, 12}));
     EXPECT_EQ(EncodeContent(tokenizer, "hello<|im_start|>hello"),
               (std::vector<int>{10, 34, 10}));
-    EXPECT_EQ(tokenizer.Decode({33, 34, 32, 3}), "<tag>long<|im_start|><tag>h");
+    EXPECT_EQ(tokenizer.Decode({33, 34, 32, 3}), "<|tag|>long|><|im_start|><|tag|>h");
 }
 
 TEST_F(TokenizerFiles, BpeEncodeAlwaysAddsMarkersAndDecodePreservesSpecialText) {
@@ -314,16 +318,14 @@ TEST_F(TokenizerFiles, BpeEncodeAlwaysAddsMarkersAndDecodePreservesSpecialText) 
     EXPECT_THROW(tokenizer.Decode({tokenizer.GetVocabSize()}), std::out_of_range);
 }
 
-TEST_F(TokenizerFiles, BpeAcceptsEntryArrayAndHonorsExplicitSpecialFlags) {
-    WriteBpe(R"json([
-        {"id":0,"context":"<bos>"},{"id":1,"context":"<eos>"},
-        {"id":2,"context":"<unk>"},{"id":3,"context":"a"},
-        {"id":4,"context":"\u4E2D","special":true}
-    ])json", "", R"({"bos_id":0,"eos_id":1,"unk_id":2})");
+TEST_F(TokenizerFiles, BpeRecognizesUnicodeSpecialInObjectVocabulary) {
+    WriteBpe(R"json({
+        "<bos>":0,"<eos>":1,"<unk>":2,"a":3,"<|\u4E2D|>":4
+    })json", "", R"({"bos_id":0,"eos_id":1,"unk_id":2})");
     BpeTokenizer tokenizer;
     LoadBpe(tokenizer);
-    EXPECT_EQ(EncodeContent(tokenizer, u8"\u4E2Da"), (std::vector<int>{4, 3}));
-    EXPECT_EQ(tokenizer.Decode({4, 3}), u8"\u4E2Da");
+    EXPECT_EQ(EncodeContent(tokenizer, u8"<|\u4E2D|>a"), (std::vector<int>{4, 3}));
+    EXPECT_EQ(tokenizer.Decode({4, 3}), u8"<|\u4E2D|>a");
 }
 
 TEST_F(TokenizerFiles, BpeFailedReloadPreservesPreviouslyUsableState) {
@@ -336,7 +338,7 @@ TEST_F(TokenizerFiles, BpeFailedReloadPreservesPreviouslyUsableState) {
         Write(file, "invalid");
         EXPECT_THROW(tokenizer.Load(Path("vocab.json"), Path("merges.txt"),
                                     Path("special.json")), std::runtime_error);
-        EXPECT_EQ(EncodeContent(tokenizer, "hello<tag>long"),
+        EXPECT_EQ(EncodeContent(tokenizer, "hello<|tag|>long|>"),
                   (std::vector<int>{10, 33}));
         EXPECT_EQ(tokenizer.Decode({0, 10, 1}), "<bos>hello<eos>");
         EXPECT_EQ(tokenizer.GetVocabSize(), 35);
@@ -387,10 +389,7 @@ TEST_F(TokenizerFiles, BpeRejectsMissingInvalidOrConflictingSpecialIds) {
         R"({"bos_id":0,"eos_id":1,"unk_id":999})",
         R"({"bos_id":0,"eos_id":0,"unk_id":2})",
         R"({"bos_id":0,"eos_id":1,"unk_id":-1})",
-        R"({"bos_id":true,"eos_id":1,"unk_id":2})",
-        R"({"bos_id":0,"eos_id":1,"unk_id":2,"special_tokens":{}})",
-        R"({"bos_id":0,"eos_id":1,"unk_id":2,"special_tokens":[3]})",
-        R"({"bos_id":0,"eos_id":1,"unk_id":2,"special_tokens":["missing"]})"
+        R"({"bos_id":true,"eos_id":1,"unk_id":2})"
     }) {
         SCOPED_TRACE(specials);
         WriteBpe(kBpeVocabulary, kBpeMerges, specials);

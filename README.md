@@ -76,7 +76,7 @@ auto text = tokenizer->Decode(ids);
 
 ASCII 保留全部 128 个字节值，包括 NUL、换行和制表符；BOS/EOS/UNK 的 ID 分别为 128/129/130。非 ASCII 的每个输入字节产生一个 UNK。
 
-JSON 词表使用下面的数组结构，`special` 可省略，省略时为 `false`。必须包含 `<BOS>`、`<EOS>`、`<UNK>`，普通文本按最长 token 匹配；未知字符每个 Unicode 字符产生一个 UNK，非法 UTF-8 则每个字节产生一个 UNK。
+JSON 词表使用下面的数组结构，`special` 可省略，省略时为 `false`。必须包含 `<BOS>`、`<EOS>`、`<UNK>`，普通文本按最长 token 匹配；未匹配的每个字节产生一个 UNK。
 
 ```json
 [
@@ -87,20 +87,19 @@ JSON 词表使用下面的数组结构，`special` 可省略，省略时为 `fal
 ]
 ```
 
-BPE 词表支持上述数组，也支持 `{"token": id}` 对象。普通 token 字符串使用 GPT-2 的字节到 Unicode 映射，例如空格字节对应 `Ġ`。`merges.txt` 每行是两个 token，行序决定优先级，支持 `#version: 0.2` 头；合并规则的两个输入及合并结果都必须存在于普通词表中。
+BPE 词表使用 `{"token": id}` 对象。普通 token 字符串使用 GPT-2 的字节到 Unicode 映射，例如空格字节对应 `Ġ`。`merges.txt` 每行是两个 token，行序决定优先级，支持 `#version: 0.2` 头；合并规则的两个输入及合并结果都必须存在于普通词表中。
 
-特殊 token 配置的格式如下，前三个 ID 必须存在于词表且互不相同；`special_tokens` 可省略。BOS/EOS/UNK、数组词表中标注 `special: true` 的项、`<|...|>` 形式的项，以及配置中列出的项都会被作为整体识别，优先匹配最长的特殊 token。
+特殊 token 配置的格式如下，三个 ID 必须存在于词表且互不相同。BOS/EOS/UNK 和词表中 `<|...|>` 形式的项都会被作为整体识别，优先匹配最长的特殊 token。
 
 ```json
 {
   "bos_id": 0,
   "eos_id": 1,
-  "unk_id": 2,
-  "special_tokens": ["<|im_start|>", "<|im_end|>"]
+  "unk_id": 2
 }
 ```
 
-词表 ID 必须是非负整数且小于 `INT_MAX`，不允许重复 ID、重复字符串或空字符串。允许稀疏 ID，`GetVocabSize()` 返回最大 ID 加一，缺失的 ID 不能用于解码。JSON 解析支持标准转义、中文和 emoji 的 Unicode 代理对，非法或未完整解析的文件会被拒绝。
+词表 ID 必须是非负整数且小于 `INT_MAX`，不允许重复 ID、重复字符串或空字符串。允许稀疏 ID，`GetVocabSize()` 返回最大 ID 加一，缺失的 ID 不能用于解码。JSON 解析支持标准转义、中文和 emoji 的 Unicode 代理对；普通字符串按原字节保存，JSON 语法错误或未完整解析的文件会被拒绝。
 
 BPE 必须先成功 `Load()` 才能编码、解码；成功重载替换全部状态，失败重载保留原来可用的状态。`DecodeToken()` 已还原字节映射，但单个 BPE token 可能仅包含 UTF-8 字符的一部分，应使用 `Decode()` 拼接后再读取完整文本。当前 BPE 在特殊 token 之间的普通文本片段内合并，未实现 GPT-2 的正则预分词，因此不保证与完整 GPT-2 分词器产生相同的 token 序列。
 
