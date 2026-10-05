@@ -1,6 +1,7 @@
 add_executable(yan_minillama_tests
     tensor_test.cc
     ops_test.cc
+    tokenizer_test.cc
 )
 target_link_libraries(yan_minillama_tests PRIVATE
     yan_minillama
@@ -17,4 +18,6 @@ include(GoogleTest)
 gtest_discover_tests(yan_minillama_tests
     DISCOVERY_MODE PRE_TEST
     DISCOVERY_TIMEOUT 30
+    NO_PRETTY_VALUES
+    PROPERTIES TIMEOUT 30
 )

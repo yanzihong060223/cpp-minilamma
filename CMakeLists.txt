@@ -11,6 +11,9 @@ option(YAN_MINILLAMA_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBeh
 add_library(yan_minillama STATIC
     src/tensor.cc
     src/ops.cc
+    src/tonizer.cc
+    src/jsonvocab.cc
+    src/bpevocab.cc
     matumal/matuml_ops.cc
 )
 target_include_directories(yan_minillama PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
