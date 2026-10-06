@@ -2,6 +2,9 @@ add_executable(yan_minillama_tests
     tensor_test.cc
     ops_test.cc
     tokenizer_test.cc
+    kvcache_test.cc
+    radix_tree_test.cc
+    context_test.cc
 )
 target_link_libraries(yan_minillama_tests PRIVATE
     yan_minillama
