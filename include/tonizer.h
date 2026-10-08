@@ -102,10 +102,10 @@ public:
  //加载初始化
  bool Load(const std::string& json_path, const std::string& merge_path, const std::string& special_path);
  private:
- int BOS_id_;
- int EOS_id_;
- int UNK_id_;
- int vocab_size_;
+ int BOS_id_ = -1;
+ int EOS_id_ = -1;
+ int UNK_id_ = -1;
+ int vocab_size_ = 0;
 // token字符串 -> tokenid
 std::unordered_map<std::string, int> vocab_;
 //token id -> token字符串
