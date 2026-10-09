@@ -5,6 +5,9 @@ add_executable(yan_minillama_tests
     kvcache_test.cc
     radix_tree_test.cc
     context_test.cc
+    terminal_test.cc
+    chatsession_test.cc
+    prompt_build_test.cc
 )
 target_link_libraries(yan_minillama_tests PRIVATE
     yan_minillama
