@@ -12,6 +12,9 @@ add_library(yan_minillama STATIC
     src/tensor.cc
     src/kvcache.cc
     src/radix_tree.cc
+    src/prompt_build.cc
+    src/terminal.cc
+    src/chatsession.cc
     src/ops.cc
     src/tonizer.cc
     src/jsonvocab.cc
