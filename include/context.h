@@ -4,7 +4,10 @@
 #include "include/kvcache.h"
 #include <vector>
 #include <string>
-class LammaModel;
+namespace yan_lamma {
+class Model;
+}
+using LammaModel = yan_lamma::Model;
 class CudaKvCache;
 namespace yan_lamma {
 class Context {

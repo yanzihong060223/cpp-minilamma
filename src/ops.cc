@@ -121,4 +121,53 @@ Tensor SwiGlu(const Tensor& gate, const Tensor& up) {
 Tensor Linear(const Tensor& a, const Tensor& b, MatulMode mode) {
     return LinearDispatch(a, b, mode);
 }
+
+void Rope(Tensor& q, Tensor& k, int pos, float theta, RopeType rope_type) {
+    // q: [n_heads, head_dim]，k: [n_kv_heads, head_dim]。
+    CheckDims(q, 2, "Rope q");
+    CheckDims(k, 2, "Rope k");
+    if (pos < 0) {
+        throw std::out_of_range("Rope: position must be non-negative");
+    }
+    if (!std::isfinite(theta) || theta <= 0.0f) {
+        throw std::runtime_error("Rope: theta must be finite and positive");
+    }
+    const int head_dim = q.shape[1];
+    if (q.shape[0] <= 0 || k.shape[0] <= 0 || head_dim <= 0 ||
+        head_dim % 2 != 0 || k.shape[1] != head_dim) {
+        throw std::runtime_error("Rope: expected positive heads and matching positive even head_dim");
+    }
+    const size_t dim = static_cast<size_t>(head_dim);
+    if (q.data.size() % dim != 0 ||
+        q.data.size() / dim != static_cast<size_t>(q.shape[0]) ||
+        k.data.size() % dim != 0 ||
+        k.data.size() / dim != static_cast<size_t>(k.shape[0])) {
+        throw std::runtime_error("Rope: data size does not match shape");
+    }
+
+    const int half_dim = head_dim / 2;
+    for (int i = 0; i < half_dim; ++i) {
+        const double angle = static_cast<double>(pos) *
+            std::pow(static_cast<double>(theta), -2.0 * i / head_dim);
+        const double cos_value = std::cos(angle);
+        const double sin_value = std::sin(angle);
+        // Normal 旋转相邻两个元素；NeoX 旋转前、后半区的对应元素。
+        const size_t first = rope_type == RopeType::kNormal
+            ? static_cast<size_t>(i) * 2 : static_cast<size_t>(i);
+        const size_t second = rope_type == RopeType::kNormal
+            ? first + 1 : first + static_cast<size_t>(half_dim);
+        for (int tensor_index = 0; tensor_index < 2; ++tensor_index) {
+            Tensor& tensor = tensor_index == 0 ? q : k;
+            for (int head = 0; head < tensor.shape[0]; ++head) {
+                const size_t base = static_cast<size_t>(head) * dim;
+                const double x0 = tensor.data[base + first];
+                const double x1 = tensor.data[base + second];
+                tensor.data[base + first] =
+                    static_cast<float>(x0 * cos_value - x1 * sin_value);
+                tensor.data[base + second] =
+                    static_cast<float>(x0 * sin_value + x1 * cos_value);
+            }
+        }
+    }
+}
 }//namespace yan_lamma
