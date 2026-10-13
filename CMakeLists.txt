@@ -10,6 +10,8 @@ option(YAN_MINILLAMA_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBeh
 
 add_library(yan_minillama STATIC
     src/tensor.cc
+    src/load.cc
+    src/quantiezd_tensor.cc
     src/kvcache.cc
     src/radix_tree.cc
     src/prompt_build.cc

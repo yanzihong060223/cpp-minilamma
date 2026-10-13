@@ -1,5 +1,6 @@
 #pragma once
 #include "include/tensor.h"
+#include "include/model.h"
 #include "matumal/matuml_ops.h"
 #include <cmath>
 namespace yan_lamma{
@@ -21,8 +22,8 @@ Tensor Silu(const Tensor& a);
 //Silu(gate) 与 up 逐元素相乘
 Tensor SwiGlu(const Tensor& gate, const Tensor& up);
 //根据 token 位置旋转 Q、K
-//void Rope(Tensor& q, Tensor& k, int pos, float theta,
- //         RopeType rope_type = RopeType::kNormal);
+void Rope(Tensor& q, Tensor& k, int pos, float theta,
+       RopeType rope_type = RopeType::kNormal);
 
 
 

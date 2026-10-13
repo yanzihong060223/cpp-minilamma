@@ -430,4 +430,151 @@ TEST(SwiGluTest, RejectsDifferentGateAndUpShapes) {
                  std::runtime_error);
 }
 
+
+TEST(RopeTest, PositionZeroLeavesBothLayoutsUnchanged) {
+    for (auto type : {yan_lamma::RopeType::kNormal, yan_lamma::RopeType::kNeoX}) {
+        SCOPED_TRACE(static_cast<int>(type));
+        Tensor q = MakeTensor({2, 4}, {1, 2, 3, 4, -2, 0.5f, 1, -3});
+        Tensor k = MakeTensor({1, 4}, {5, -6, 7, -8});
+        const Tensor original_q = q;
+        const Tensor original_k = k;
+        yan_lamma::Rope(q, k, 0, 10000.0f, type);
+        EXPECT_EQ(q.shape, original_q.shape);
+        EXPECT_EQ(k.shape, original_k.shape);
+        EXPECT_EQ(q.data, original_q.data);
+        EXPECT_EQ(k.data, original_k.data);
+    }
+}
+
+TEST(RopeTest, NormalMatchesFixedMathematicalValues) {
+    Tensor q = MakeTensor({1, 4}, {1, 2, 3, 4});
+    Tensor k = MakeTensor({1, 4}, {-2, 0.5f, 1, -3});
+    // pos=1, theta=100: adjacent pairs rotate by 1 and 0.1 radians.
+    yan_lamma::Rope(q, k, 1, 100.0f, yan_lamma::RopeType::kNormal);
+    ExpectTensor(q, {1, 4}, {-1.1426396637476532, 1.922075596544176,
+                             2.585678829246765, 4.279516911052588});
+    ExpectTensor(k, {1, 4}, {-1.501340104140228, -1.4127908166817231,
+                             1.2945044152185103, -2.8851790791872496});
+}
+
+TEST(RopeTest, NeoXMatchesFixedMathematicalValues) {
+    Tensor q = MakeTensor({1, 4}, {1, 2, 3, 4});
+    Tensor k = MakeTensor({1, 4}, {-2, 0.5f, 1, -3});
+    // Half-region pairs (0,2) and (1,3) rotate by 1 and 0.1 radians.
+    yan_lamma::Rope(q, k, 1, 100.0f, yan_lamma::RopeType::kNeoX);
+    ExpectTensor(q, {1, 4}, {-1.9841106485555495, 1.590674663968739,
+                             2.4623779024123156, 4.17968349440576});
+    ExpectTensor(k, {1, 4}, {-1.922075596544176, 0.7970023325794974,
+                             -1.1426396637476532, -2.9350957875106634});
+}
+
+TEST(RopeTest, DifferentQueryAndKeyHeadCountsMatchIndependentHeads) {
+    const Tensor original_q = MakeTensor(
+        {3, 4}, {1, 2, 3, 4, -2, 0.5f, 1, -3, 4, -1, 2, 0.25f});
+    const Tensor original_k = MakeTensor({2, 4}, {3, 2, 1, 0, -1, 2, -3, 4});
+    for (auto type : {yan_lamma::RopeType::kNormal, yan_lamma::RopeType::kNeoX}) {
+        SCOPED_TRACE(static_cast<int>(type));
+        Tensor q = original_q;
+        Tensor k = original_k;
+        yan_lamma::Rope(q, k, 7, 10000.0f, type);
+        std::vector<double> expected_q;
+        std::vector<double> expected_k;
+        for (int head = 0; head < original_q.shape[0]; ++head) {
+            const auto first = original_q.data.begin() + head * 4;
+            Tensor one_q = MakeTensor({1, 4}, std::vector<float>(first, first + 4));
+            Tensor one_k = MakeTensor({1, 4}, {0, 0, 0, 0});
+            yan_lamma::Rope(one_q, one_k, 7, 10000.0f, type);
+            expected_q.insert(expected_q.end(), one_q.data.begin(), one_q.data.end());
+        }
+        for (int head = 0; head < original_k.shape[0]; ++head) {
+            const auto first = original_k.data.begin() + head * 4;
+            Tensor one_q = MakeTensor({1, 4}, {0, 0, 0, 0});
+            Tensor one_k = MakeTensor({1, 4}, std::vector<float>(first, first + 4));
+            yan_lamma::Rope(one_q, one_k, 7, 10000.0f, type);
+            expected_k.insert(expected_k.end(), one_k.data.begin(), one_k.data.end());
+        }
+        ExpectTensor(q, {3, 4}, expected_q);
+        ExpectTensor(k, {2, 4}, expected_k);
+    }
+}
+
+TEST(RopeTest, RotationsComposeAndPreserveEachHeadNorm) {
+    const Tensor original_q = MakeTensor({2, 4}, {1, 2, -3, 4, -2, 0.5f, 1, -3});
+    const Tensor original_k = MakeTensor({1, 4}, {3, -2, 1, 0.25f});
+    for (auto type : {yan_lamma::RopeType::kNormal, yan_lamma::RopeType::kNeoX}) {
+        SCOPED_TRACE(static_cast<int>(type));
+        Tensor q = original_q;
+        Tensor k = original_k;
+        Tensor combined_q = original_q;
+        Tensor combined_k = original_k;
+        yan_lamma::Rope(q, k, 3, 100.0f, type);
+        yan_lamma::Rope(q, k, 4, 100.0f, type);
+        yan_lamma::Rope(combined_q, combined_k, 7, 100.0f, type);
+        ExpectTensor(q, original_q.shape,
+                     std::vector<double>(combined_q.data.begin(), combined_q.data.end()));
+        ExpectTensor(k, original_k.shape,
+                     std::vector<double>(combined_k.data.begin(), combined_k.data.end()));
+        for (const auto& tensors : {std::make_pair(original_q, q),
+                                   std::make_pair(original_k, k)}) {
+            for (int head = 0; head < tensors.first.shape[0]; ++head) {
+                SCOPED_TRACE("head " + std::to_string(head));
+                double before = 0.0;
+                double after = 0.0;
+                for (int dim = 0; dim < 4; ++dim) {
+                    const double a = tensors.first.At2(head, dim);
+                    const double b = tensors.second.At2(head, dim);
+                    before += a * a;
+                    after += b * b;
+                }
+                ExpectNearDouble(after, before);
+            }
+        }
+    }
+}
+
+TEST(RopeTest, RejectsInvalidArgumentsBeforeModifyingEitherTensor) {
+    const Tensor valid_q = MakeTensor({2, 4}, {1, 2, 3, 4, 5, 6, 7, 8});
+    const Tensor valid_k = MakeTensor({1, 4}, {-1, 2, -3, 4});
+    const auto check_rejected = [](Tensor q, Tensor k, int pos, float theta,
+                                   yan_lamma::RopeType type) {
+        const Tensor before_q = q;
+        const Tensor before_k = k;
+        EXPECT_THROW(yan_lamma::Rope(q, k, pos, theta, type), std::exception);
+        EXPECT_EQ(q.shape, before_q.shape);
+        EXPECT_EQ(k.shape, before_k.shape);
+        EXPECT_EQ(q.data, before_q.data);
+        EXPECT_EQ(k.data, before_k.data);
+    };
+    const std::vector<NamedTensor> malformed{
+        {"empty", Tensor{}},
+        {"scalar rank", Malformed({}, {1})},
+        {"vector rank", MakeTensor({4}, {1, 2, 3, 4})},
+        {"three-dimensional rank", MakeTensor({1, 1, 4}, {1, 2, 3, 4})},
+        {"zero heads", Malformed({0, 4})},
+        {"negative heads", Malformed({-1, 4})},
+        {"zero head dimension", Malformed({1, 0})},
+        {"negative head dimension", Malformed({1, -4})},
+        {"mismatched head dimension", MakeTensor({1, 2}, {1, 2})},
+        {"short storage", Malformed({1, 4}, {1, 2, 3})},
+        {"long storage", Malformed({1, 4}, {1, 2, 3, 4, 5})},
+    };
+    for (const auto& named : malformed) {
+        SCOPED_TRACE(named.first);
+        check_rejected(named.second, valid_k, 2, 10000.0f, yan_lamma::RopeType::kNormal);
+        check_rejected(valid_q, named.second, 2, 10000.0f, yan_lamma::RopeType::kNeoX);
+    }
+    check_rejected(MakeTensor({1, 3}, {1, 2, 3}), MakeTensor({1, 3}, {4, 5, 6}),
+                   2, 10000.0f, yan_lamma::RopeType::kNormal);
+    for (int pos : {-1, std::numeric_limits<int>::min()}) {
+        SCOPED_TRACE("pos " + std::to_string(pos));
+        check_rejected(valid_q, valid_k, pos, 10000.0f, yan_lamma::RopeType::kNormal);
+    }
+    for (float theta : {0.0f, -1.0f, std::numeric_limits<float>::quiet_NaN(),
+                         std::numeric_limits<float>::infinity(),
+                         -std::numeric_limits<float>::infinity()}) {
+        SCOPED_TRACE("theta " + std::to_string(theta));
+        check_rejected(valid_q, valid_k, 2, theta, yan_lamma::RopeType::kNeoX);
+    }
+}
+
 }  // namespace

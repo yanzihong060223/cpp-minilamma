@@ -13,7 +13,7 @@ namespace {
   int dim = model.config.dim;
   Tensor t({dim}, 0.0f);
   for(int i = 0; i < dim; i++) {
-    t.data[i] = model.token_embedding.data[token_id * dim + i];
+    t.data[i] = model.embedding_data_.data[token_id * dim + i];
   }
   return t;
 }
@@ -96,10 +96,10 @@ Tensor FfnForward(const Model& model, const std::string& st, const Tensor& h, co
     std::string up_name = st + "w_up";
     std::string down_name = st + "w_down";
     // cpu
-    Tensor gate = ForwardLinear(model, gate_name, h, weight.w_gate);
-    Tensor up = ForwardLinear(model, up_name, h, weight.w_up);
+    Tensor gate = ForwardLinear(model, gate_name, h, ToTensor(weight.w_gate));
+    Tensor up = ForwardLinear(model, up_name, h, ToTensor(weight.w_up));
     Tensor ff = ForwardSwiGlu(model, gate, up);
-    return ForwardLinear(model, down_name, ff, weight.w_down);
+    return ForwardLinear(model, down_name, ff, ToTensor(weight.w_down));
 }
 //ensor RmsNorm(const Tensor& x, const Tensor& weight, float eps)
 Tensor ForwardRmsNorm(const Model& model, const Tensor& x, const Tensor& weight, float eps) {
@@ -111,9 +111,9 @@ void ForwardQKVProject(const Model& model, const std::string layer_prefix, const
     const std::string k_name = layer_prefix + "wk";
     const std::string v_name = layer_prefix + "wv";
     //Tensor ForwardLinear (const Model& model, const std::string& name, const Tensor& x, const Tensor& weight)
-    q_float = AddOptionBais(ForwardLinear(model, q_name, h, weight.wq), weight.bq);
-    k_float = AddOptionBais(ForwardLinear(model, k_name, h, weight.wk), weight.bk);
-    v_float = AddOptionBais(ForwardLinear(model, v_name, h, weight.wv), weight.bv);
+    q_float = AddOptionBais(ForwardLinear(model, q_name, h, ToTensor(weight.wq)), weight.bq);
+    k_float = AddOptionBais(ForwardLinear(model, k_name, h, ToTensor(weight.wk)), weight.bk);
+    v_float = AddOptionBais(ForwardLinear(model, v_name, h, ToTensor(weight.wv)), weight.bv);
 
 }
 Tensor ForwardLayer(const Model& model, Tensor& x, Context& context, int layer, const LayerWeights& weight) {
@@ -136,7 +136,7 @@ Tensor ForwardLayer(const Model& model, Tensor& x, Context& context, int layer, 
     Tensor out = ForwardAttention(model, q, k, v, layer, pos,
                                   context.cpu_cache_, n_heads, n_kv_heads, head_dim);
     Tensor out_flat = out.Reshape({1, n_heads * head_dim}, "forward out_flat");
-    Tensor out_flat_obj = ForwardLinear(model, layer_prefix + "wo", out_flat, weight.wo);
+    Tensor out_flat_obj = ForwardLinear(model, layer_prefix + "wo", out_flat, ToTensor(weight.wo));
     out_flat_obj.AssertShape({1, dim}, "forward out_flat");
     Tensor out_pattern = out_flat_obj.Reshape({dim}, "forward out_pattern");
     Tensor res = ForwardAdd(model, x, out_pattern);
@@ -152,14 +152,14 @@ Tensor ComputeLogits(const Model& model, Tensor& x) {
         model, x, model.final_norm, config.rms_norm_eps);
 
     Tensor logits = ForwardLinear(
-        model, "lm_head", normed, model.lm_head);
+        model, "lm_head", normed, ToTensor(model.lm_head_));
 
     return logits.Reshape({config.vocab_size}, "logits");
 }
 } // namespace
 Tensor ForwardToken(const Model& model, Context& context, int token) {
     auto config = model.config;
-    if (!model.loaded) {
+    if (!model.is_loaded) {
         throw std::runtime_error("Model Load Failed");
     }
     if (token < 0 || token >= config.vocab_size) {
@@ -168,20 +168,20 @@ Tensor ForwardToken(const Model& model, Context& context, int token) {
     if (context.pos < 0 || context.pos >= config.max_seq_len) {
         throw std::out_of_range("ForwardToken position out of range");
     }
-    if (model.n_layer != config.n_layers) {
+    if (model.n_layers_.size() != static_cast<size_t>(config.layers)) {
         throw std::runtime_error("Layer Match Failed");
     }
-    if (model.token_embedding.data.size() <
+    if (model.embedding_data_.data.size() <
                 static_cast<size_t>(config.vocab_size * config.dim)) {
                 throw std::runtime_error(
                 "ForwardToken token embedding tensor is smaller than config");
     }
-    int layers = config.n_layers;
+    int layers = config.layers;
     Tensor emb = Embedding(model, token);
 
     for (int i = 0; i < layers; ++i) {
         
-        emb = ForwardLayer(model, emb, context, i, model.layers[i]);
+        emb = ForwardLayer(model, emb, context, i, model.n_layers_[i]);
     }
 
     return ComputeLogits(model, emb);
