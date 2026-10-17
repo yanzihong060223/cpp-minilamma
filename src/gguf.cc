@@ -620,6 +620,20 @@ bool Inspect(const GgufRead& read) {
    }
   return true;
  }
+bool GetGuffMetadaFloat(const std::string& path, const std::string& key, float& out) {
+    std::ifstream f;
+    GgufValueType type;
+    if (!FindMatedaKey(f, path, key, type)) {
+        return false;
+    }
+    if (type !=  GgufValueType::kGgufTypeFloat32) {
+        return false;
+    }
+    if (!ReadDl(f, out)) {
+      return false;
+    }
+    return true;
+}
 bool GetGuffMetadaDoule(const std::string& path, const std::string& key, double& out) {
   std::ifstream f;
   GgufValueType type;

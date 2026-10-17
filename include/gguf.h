@@ -57,6 +57,7 @@ namespace yan_lamma {
     //读取元数据字段
     bool GetGuffMetadaInt(const std::string& path, const std::string& key, int64_t& out);
     bool GetGuffMetadaDoule(const std::string& path, const std::string& key, double& out);
+    bool GetGuffMetadaFloat(const std::string& path, const std::string& key, float& out);
     bool GetGuffMetadaString(const std::string& path, const std::string& key, std::string& out);
     bool GetGuffMetadaStringArry(const std::string& path, const std::string& key, std::vector<std::string>& out);
     bool GetGuffMetadaIntArry(const std::string& path, const std::string& key, std::vector<int>& out);

@@ -11,6 +11,7 @@ add_executable(yan_minillama_tests
     chatsession_test.cc
     prompt_build_test.cc
     gguf_test.cc
+    gguf_load_test.cc
 )
 target_link_libraries(yan_minillama_tests PRIVATE
     yan_minillama
