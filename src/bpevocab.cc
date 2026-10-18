@@ -9,7 +9,7 @@
 #include <system_error>
 #include <unordered_set>
 #include <utility>
-
+#include <memory>
 namespace yan_lamma {
 
 static std::string CodepointToUtf8(char32_t cp) {
@@ -130,7 +130,7 @@ static std::string ParseString(const std::string& text, std::size_t& pos) {
     throw std::runtime_error("Unterminated JSON string");
 }
 
-static int ParseInt(const std::string& text, std::size_t& pos) {
+static int ParseInt(const std::string& text, std::size_t& pos, bool allow_missing = false) {
     while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t' ||
            text[pos] == '\r' || text[pos] == '\n')) ++pos;
     const auto start = pos;
@@ -142,8 +142,9 @@ static int ParseInt(const std::string& text, std::size_t& pos) {
     else while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9') ++pos;
     int id = -1;
     const auto parsed = std::from_chars(text.data() + start, text.data() + pos, id);
-    if (parsed.ec != std::errc{} || id < 0 || id == std::numeric_limits<int>::max()) {
-        throw std::runtime_error("Token ID must be in [0, INT_MAX - 1]");
+    if (parsed.ec != std::errc{} || id < (allow_missing ? -1 : 0) ||
+        id == std::numeric_limits<int>::max()) {
+        throw std::runtime_error("Invalid token ID (only role fields allow -1)");
     }
     return id;
 }
@@ -185,6 +186,7 @@ bool BpeTokenizer::Load(const std::string& json_path, const std::string& merge_p
     pending.BOS_id_ = pending.EOS_id_ = pending.UNK_id_ = -1;
     pending.BuildByteMap();
     std::unordered_set<int> seen_ids, special_ids;
+    int pad_id = -1;
 
     // vocab.json: {"token": ID}
     {
@@ -271,7 +273,7 @@ bool BpeTokenizer::Load(const std::string& json_path, const std::string& merge_p
         if (file.bad()) throw std::runtime_error("Cannot read BPE merge file: " + merge_path);
     }
 
-    // special_tokens.json: bos_id, eos_id, unk_id.
+    // special_tokens.json: optional role IDs (-1 means absent), plus special_ids.
     {
         std::ifstream file(special_path, std::ios::binary);
         if (!file) throw std::runtime_error("Cannot open special token file: " + special_path);
@@ -296,11 +298,40 @@ bool BpeTokenizer::Load(const std::string& json_path, const std::string& merge_p
             if (pos == content.size() || content[pos++] != ':') {
                 throw std::runtime_error("Missing special ID colon");
             }
-            const int id = ParseInt(content, pos);
-            if (key == "bos_id") pending.BOS_id_ = id;
-            else if (key == "eos_id") pending.EOS_id_ = id;
-            else if (key == "unk_id") pending.UNK_id_ = id;
-            else throw std::runtime_error("Unknown special ID field: " + key);
+            if (key == "special_ids") {
+                special_ids.clear();
+                pending.special_tokens.clear();
+                auto skip_space = [&] {
+                    while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
+                           content[pos] == '\r' || content[pos] == '\n')) ++pos;
+                };
+                skip_space();
+                if (pos == content.size() || content[pos++] != '[') {
+                    throw std::runtime_error("special_ids must be an array");
+                }
+                skip_space();
+                if (pos < content.size() && content[pos] != ']') {
+                    while (true) {
+                        if (!special_ids.insert(ParseInt(content, pos)).second) {
+                            throw std::runtime_error("Duplicate special token ID");
+                        }
+                        skip_space();
+                        if (pos == content.size()) throw std::runtime_error("Truncated special_ids");
+                        if (content[pos] == ']') break;
+                        if (content[pos++] != ',') throw std::runtime_error("Missing special ID comma");
+                    }
+                }
+                if (pos == content.size() || content[pos++] != ']') {
+                    throw std::runtime_error("Unterminated special_ids");
+                }
+            } else {
+                const int id = ParseInt(content, pos, true);
+                if (key == "bos_id") pending.BOS_id_ = id;
+                else if (key == "eos_id") pending.EOS_id_ = id;
+                else if (key == "unk_id") pending.UNK_id_ = id;
+                else if (key == "pad_id") pad_id = id;
+                else throw std::runtime_error("Unknown special ID field: " + key);
+            }
             while (pos < content.size() && (content[pos] == ' ' || content[pos] == '\t' ||
                    content[pos] == '\r' || content[pos] == '\n')) ++pos;
             if (pos == content.size()) throw std::runtime_error("Truncated special configuration");
@@ -320,13 +351,14 @@ bool BpeTokenizer::Load(const std::string& json_path, const std::string& merge_p
         if (pos != content.size()) throw std::runtime_error("Unexpected trailing special ID data");
     }
 
-    if (pending.BOS_id_ == pending.EOS_id_ || pending.BOS_id_ == pending.UNK_id_ ||
-        pending.EOS_id_ == pending.UNK_id_) throw std::runtime_error("Special IDs must be distinct");
-    for (int id : {pending.BOS_id_, pending.EOS_id_, pending.UNK_id_}) {
+    for (int id : {pending.BOS_id_, pending.EOS_id_, pending.UNK_id_, pad_id}) {
+        if (id >= 0) special_ids.insert(id);
+    }
+    // An explicit list replaces the legacy <|...|> inference above.
+    pending.special_tokens.clear();
+    for (int id : special_ids) {
         if (seen_ids.count(id) == 0) throw std::runtime_error("Special ID is missing from vocabulary");
-        if (special_ids.insert(id).second) {
-            pending.special_tokens.emplace_back(pending.id_to_token_[id], id);
-        }
+        pending.special_tokens.emplace_back(pending.id_to_token_[id], id);
     }
     std::sort(pending.special_tokens.begin(), pending.special_tokens.end(),
               [](const auto& a, const auto& b) { return a.first.size() > b.first.size(); });
@@ -352,8 +384,9 @@ bool BpeTokenizer::Load(const std::string& json_path, const std::string& merge_p
 }
 
 std::vector<int> BpeTokenizer::Encode(const std::string& text) const {
+    if (b2u_.size() != 256) throw std::runtime_error("BPE tokenizer is not loaded");
     std::vector<int> result;
-    result.push_back(BOS_id_);
+    if (BOS_id_ >= 0) result.push_back(BOS_id_);
     std::size_t pos = 0;
     while (pos < text.size()) {
         bool matched = false;
@@ -392,10 +425,13 @@ std::vector<int> BpeTokenizer::Encode(const std::string& text) const {
         }
         for (const auto& piece : pieces) {
             const auto it = vocab_.find(piece);
+            if (it == vocab_.end() && UNK_id_ < 0) {
+                throw std::runtime_error("Cannot encode BPE piece without an UNK token");
+            }
             result.push_back(it == vocab_.end() ? UNK_id_ : it->second);
         }
     }
-    result.push_back(EOS_id_);
+    if (EOS_id_ >= 0) result.push_back(EOS_id_);
     return result;
 }
 
@@ -426,5 +462,4 @@ std::string BpeTokenizer::Decode(std::vector<int> tokens) const {
     for (int token : tokens) result += DecodeToken(token);
     return result;
 }
-
 }  // namespace yan_lamma

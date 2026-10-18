@@ -18,6 +18,14 @@ target_link_libraries(yan_minillama_tests PRIVATE
     GTest::gtest_main
 )
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_executable(gguf_tokenizer_compare gguf_tokenizer_compare.cc)
+target_link_libraries(gguf_tokenizer_compare PRIVATE yan_minillama)
+add_test(NAME GgufTokenizerExport
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gguf_tokenizer_export_test.py"
+            "$<TARGET_FILE:gguf_tokenizer_compare>")
+set_tests_properties(GgufTokenizerExport PROPERTIES TIMEOUT 30)
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(yan_minillama_tests PRIVATE -Wall -Wextra -Wpedantic)
 elseif(MSVC)

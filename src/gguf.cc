@@ -391,6 +391,10 @@ bool FindMatedaKey(std::ifstream& f, const std::string& path, const std::string 
   return false;
 }
 }//namespace 
+bool GetGuffMetadaType(const std::string& path, const std::string& key, GgufValueType& out) {
+  std::ifstream file;
+  return FindMatedaKey(file, path, key, out);
+}
 bool GgufRead::load(const std::string& file) {
   std::ifstream f(file,  std::ios::binary);
   if (! f.is_open()) {
@@ -728,7 +732,7 @@ bool GetGuffMetadaStringArry(const std::string& path, const std::string& key, st
     return false;
   }
   GgufValueType ele_type = static_cast<GgufValueType>(ele_type_raw);
-  if (len == 0 || len > kMaxArrayElements || ele_type != GgufValueType::kGgufTypeString) {
+  if (len > kMaxArrayElements || ele_type != GgufValueType::kGgufTypeString) {
       return false;
   }
   out.clear();
@@ -757,7 +761,7 @@ bool GetGuffMetadaIntArry(const std::string& path, const std::string& key, std::
     return false;
   }
   GgufValueType ele_type = static_cast<GgufValueType>(ele_type_raw);
-  if (len == 0 || len > kMaxArrayElements || ele_type != GgufValueType::kGgufTypeInt32) {
+  if (len > kMaxArrayElements || ele_type != GgufValueType::kGgufTypeInt32) {
       return false;
   }
   out.clear();

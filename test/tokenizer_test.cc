@@ -383,19 +383,48 @@ TEST_F(TokenizerFiles, BpeRejectsInvalidVocabularyBeforeUsingIdsOrByteSymbols) {
     }
 }
 
-TEST_F(TokenizerFiles, BpeRejectsMissingInvalidOrConflictingSpecialIds) {
+TEST_F(TokenizerFiles, BpeRejectsInvalidSpecialIds) {
     for (const auto* specials : {
-        R"({})", R"({"bos_id":0,"eos_id":1})",
         R"({"bos_id":0,"eos_id":1,"unk_id":999})",
-        R"({"bos_id":0,"eos_id":0,"unk_id":2})",
-        R"({"bos_id":0,"eos_id":1,"unk_id":-1})",
-        R"({"bos_id":true,"eos_id":1,"unk_id":2})"
+        R"({"bos_id":0,"eos_id":1,"unk_id":-2})",
+        R"({"pad_id":999})", R"({"pad_id":-2})", R"({"pad_id":true})",
+        R"({"bos_id":true,"eos_id":1,"unk_id":2})",
+        R"({"special_ids":999})", R"({"special_ids":[999]})",
+        R"({"special_ids":[0,0]})", R"({"special_ids":[0,]})",
+        R"({"special_ids":[-1]})", R"({"special_ids":[0] trailing})"
     }) {
         SCOPED_TRACE(specials);
         WriteBpe(kBpeVocabulary, kBpeMerges, specials);
         BpeTokenizer tokenizer;
         EXPECT_THROW(tokenizer.Load(Path("vocab.json"), Path("merges.txt"),
                                     Path("special.json")), std::runtime_error);
+    }
+}
+
+TEST_F(TokenizerFiles, BpeAcceptsOmittedAndExplicitlyMissingRoleIds) {
+    for (const auto* specials : {R"({})",
+         R"({"bos_id":-1,"eos_id":-1,"unk_id":-1,"pad_id":-1,"special_ids":[]})"}) {
+        SCOPED_TRACE(specials);
+        WriteBpe(kBpeVocabulary, kBpeMerges, specials);
+        BpeTokenizer tokenizer;
+        LoadBpe(tokenizer);
+        EXPECT_EQ(tokenizer.GetBOSId(), -1);
+        EXPECT_EQ(tokenizer.GetEOSId(), -1);
+        EXPECT_EQ(tokenizer.GetUNKId(), -1);
+        EXPECT_EQ(tokenizer.Encode("hello"), (std::vector<int>{10}));
+        EXPECT_THROW(tokenizer.Encode("Q"), std::runtime_error);
+    }
+}
+
+TEST_F(TokenizerFiles, BpeTreatsPadAsSpecialWithoutAutomaticallyAddingPadding) {
+    for (const auto* specials : {R"({"pad_id":1,"special_ids":[]})",
+                                R"({"special_ids":[],"pad_id":1})"}) {
+        WriteBpe(u8R"({"a":0,"<填充>":1})", "", specials);
+        BpeTokenizer tokenizer;
+        LoadBpe(tokenizer);
+        EXPECT_EQ(tokenizer.Encode("a"), (std::vector<int>{0}));
+        EXPECT_EQ(tokenizer.Encode(u8"<填充>a"), (std::vector<int>{1, 0}));
+        EXPECT_EQ(tokenizer.Decode({1, 0}), u8"<填充>a");
     }
 }
 

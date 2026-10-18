@@ -55,6 +55,7 @@ namespace yan_lamma {
     //计算权重占用字节数 
     bool GetGuffDataSize(const GgufTensorInfo& tensor, uint64_t& out);
     //读取元数据字段
+    bool GetGuffMetadaType(const std::string& path, const std::string& key, GgufValueType& out);
     bool GetGuffMetadaInt(const std::string& path, const std::string& key, int64_t& out);
     bool GetGuffMetadaDoule(const std::string& path, const std::string& key, double& out);
     bool GetGuffMetadaFloat(const std::string& path, const std::string& key, float& out);
