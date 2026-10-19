@@ -21,6 +21,9 @@ add_library(yan_minillama STATIC
     src/tonizer.cc
     src/jsonvocab.cc
     src/bpevocab.cc
+    src/gguf.cc
+    src/gguf_load.cc
+    src/gguf_tokenizer.cc
     matumal/matuml_ops.cc
 )
 target_include_directories(yan_minillama PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

@@ -1,6 +1,7 @@
 #pragma once
 #include "include/tensor.h"
 
+#include <cstdint>
 #include <vector>
 #include <stdexcept>
 #include <string>
@@ -8,6 +9,7 @@
 namespace yan_lamma {
 enum class QuantType {
   kF32,
+  kF16,
   kQ80,
   kQ40,
   kQ41,
@@ -17,6 +19,10 @@ struct QuanTensor {
 QuantType type = QuantType::kF32;
 std::vector<int> shape;
 std::vector<float> kF32_data;
+std::vector<uint8_t> kF16_data;
+std::vector<uint8_t> kQ80_data;
+std::vector<uint8_t> kQ40_data;
+std::vector<uint8_t> kQ41_data;
 size_t GetNumSize() const {
     size_t res = 1;
     for (int dim : shape) {
@@ -55,4 +61,7 @@ void AssertShape(const std::vector<int>& expected, const char* call) {
 };
 Tensor ToTensor(const  QuanTensor& q);
 QuanTensor ToQuanTensor(const Tensor& t);
+Tensor Q80ToTensor(const QuanTensor& q);
+Tensor Q40ToTensor(const QuanTensor& q);
+Tensor Q41ToTensor(const QuanTensor& q);
 }
