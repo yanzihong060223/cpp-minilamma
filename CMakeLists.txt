@@ -13,6 +13,10 @@ add_library(yan_minillama STATIC
     src/load.cc
     src/quantiezd_tensor.cc
     src/kvcache.cc
+    src/context.cc
+    src/batch.cc
+    src/forward.cc
+    src/sampler.cc
     src/radix_tree.cc
     src/prompt_build.cc
     src/terminal.cc

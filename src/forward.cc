@@ -1,5 +1,6 @@
 #include "include/forward.h"
 #include "include/tensor.h"
+#include "include/quantized_tensor.h"
 
 #include <vector>
 #include <stdexcept>
@@ -9,6 +10,22 @@ namespace yan_lamma {
     //void AssertShape(const std::vector<int>& expected, const char* call
     
 namespace {
+Tensor WeightToTensor(const QuanTensor& weight) {
+    switch (weight.type) {
+        case QuantType::kF32:
+            return ToTensor(weight);
+        case QuantType::kQ80:
+            return Q80ToTensor(weight);
+        case QuantType::kQ40:
+            return Q40ToTensor(weight);
+        case QuantType::kQ41:
+            return Q41ToTensor(weight);
+        default:
+            throw std::runtime_error(
+                "WeightToTensor: unsupported weight type");
+    }
+}
+
   Tensor Embedding(const Model& model, int token_id) {
   int dim = model.config.dim;
   Tensor t({dim}, 0.0f);
@@ -96,10 +113,10 @@ Tensor FfnForward(const Model& model, const std::string& st, const Tensor& h, co
     std::string up_name = st + "w_up";
     std::string down_name = st + "w_down";
     // cpu
-    Tensor gate = ForwardLinear(model, gate_name, h, ToTensor(weight.w_gate));
-    Tensor up = ForwardLinear(model, up_name, h, ToTensor(weight.w_up));
+    Tensor gate = ForwardLinear(model, gate_name, h, WeightToTensor(weight.w_gate));
+    Tensor up = ForwardLinear(model, up_name, h, WeightToTensor(weight.w_up));
     Tensor ff = ForwardSwiGlu(model, gate, up);
-    return ForwardLinear(model, down_name, ff, ToTensor(weight.w_down));
+    return ForwardLinear(model, down_name, ff, WeightToTensor(weight.w_down));
 }
 //ensor RmsNorm(const Tensor& x, const Tensor& weight, float eps)
 Tensor ForwardRmsNorm(const Model& model, const Tensor& x, const Tensor& weight, float eps) {
@@ -111,9 +128,9 @@ void ForwardQKVProject(const Model& model, const std::string layer_prefix, const
     const std::string k_name = layer_prefix + "wk";
     const std::string v_name = layer_prefix + "wv";
     //Tensor ForwardLinear (const Model& model, const std::string& name, const Tensor& x, const Tensor& weight)
-    q_float = AddOptionBais(ForwardLinear(model, q_name, h, ToTensor(weight.wq)), weight.bq);
-    k_float = AddOptionBais(ForwardLinear(model, k_name, h, ToTensor(weight.wk)), weight.bk);
-    v_float = AddOptionBais(ForwardLinear(model, v_name, h, ToTensor(weight.wv)), weight.bv);
+    q_float = AddOptionBais(ForwardLinear(model, q_name, h, WeightToTensor(weight.wq)), weight.bq);
+    k_float = AddOptionBais(ForwardLinear(model, k_name, h, WeightToTensor(weight.wk)), weight.bk);
+    v_float = AddOptionBais(ForwardLinear(model, v_name, h, WeightToTensor(weight.wv)), weight.bv);
 
 }
 Tensor ForwardLayer(const Model& model, Tensor& x, Context& context, int layer, const LayerWeights& weight) {
@@ -136,7 +153,7 @@ Tensor ForwardLayer(const Model& model, Tensor& x, Context& context, int layer, 
     Tensor out = ForwardAttention(model, q, k, v, layer, pos,
                                   context.cpu_cache_, n_heads, n_kv_heads, head_dim);
     Tensor out_flat = out.Reshape({1, n_heads * head_dim}, "forward out_flat");
-    Tensor out_flat_obj = ForwardLinear(model, layer_prefix + "wo", out_flat, ToTensor(weight.wo));
+    Tensor out_flat_obj = ForwardLinear(model, layer_prefix + "wo", out_flat, WeightToTensor(weight.wo));
     out_flat_obj.AssertShape({1, dim}, "forward out_flat");
     Tensor out_pattern = out_flat_obj.Reshape({dim}, "forward out_pattern");
     Tensor res = ForwardAdd(model, x, out_pattern);
@@ -152,7 +169,7 @@ Tensor ComputeLogits(const Model& model, Tensor& x) {
         model, x, model.final_norm, config.rms_norm_eps);
 
     Tensor logits = ForwardLinear(
-        model, "lm_head", normed, ToTensor(model.lm_head_));
+        model, "lm_head", normed, WeightToTensor(model.lm_head_));
 
     return logits.Reshape({config.vocab_size}, "logits");
 }

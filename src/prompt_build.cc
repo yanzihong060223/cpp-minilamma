@@ -1,4 +1,5 @@
 #include "include/prompt_build.h"
+#include "include/gguf.h"
 
 #include <cctype>
 #include <sstream>
@@ -526,7 +527,20 @@ std::string PromptBuild ::Build(const std::vector<ChatMessage> message) {
     }
     return BuildPlain(message);
 }
-
+std::string GetChatTemplate(const std::string& gguf_path) {
+    std::string temp = "";
+    if (gguf_path.empty()) {
+        return temp;
+    }
+    if (!GetGuffMetadaString(gguf_path, "tokenizer.chat_template", temp)) {
+        std::string architectrue;
+        if (GetGuffMetadaString(gguf_path,"general.architecture",  architectrue) && architectrue == "qwen2") {
+            return "qwen2";
+        }
+        return "";
+    }
+    return temp;
+}
 
 
 }// namespace yan_lamma

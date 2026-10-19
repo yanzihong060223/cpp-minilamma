@@ -396,6 +396,13 @@ bool GetGuffMetadaType(const std::string& path, const std::string& key, GgufValu
   return FindMatedaKey(file, path, key, out);
 }
 bool GgufRead::load(const std::string& file) {
+    n_tensors_ = 0;
+    n_metadata_ = 0;
+    version_ = 0;
+    tensorInfo_.clear();
+    metadakv_.clear();
+    data_offset_ = 0;
+    load_error_.clear();
   std::ifstream f(file,  std::ios::binary);
   if (! f.is_open()) {
      std::cerr << "gguf file open failed" << "\n";
@@ -478,17 +485,34 @@ bool GgufRead::load(const std::string& file) {
   }
   // 找到光标位置
  std::streampos oss = f.tellg();
+ if (oss == std::streampos(-1)) {
+  return false;
+ }
+ const auto data_pos = static_cast<std::streamoff>(oss);
+ if (data_pos < 0) {
+  return false;
+ }
  uint32_t alignment = ParseAlignment(metadakv_);
- data_offset_ = static_cast<uint32_t>(oss);
+ data_offset_ = static_cast<uint64_t>(data_pos);
  if (alignment == 0) {
   return false;
  }
  uint64_t padding = (alignment - (data_offset_ % alignment)) % alignment;
-  data_offset_ += padding;
+ if (!AddCheck(data_offset_, padding, data_offset_)) {
+  return false;
+ }
 // 计算大小
  f.seekg(0, std::ios::end);
  std::streampos file_size = f.tellg();
- if (static_cast<uint32_t>(file_size) < data_offset_) {
+ if (file_size == std::streampos(-1)) {
+  return false;
+ }
+ const auto file_size_offset = static_cast<std::streamoff>(file_size);
+ if (file_size_offset < 0) {
+  return false;
+ }
+ const uint64_t file_size_bytes = static_cast<uint64_t>(file_size_offset);
+ if (file_size_bytes < data_offset_) {
   return false;
  }
    for (size_t i = 0; i < n_tensors_; i++) {
@@ -504,7 +528,7 @@ bool GgufRead::load(const std::string& file) {
     if (!AddCheck(tensor_start, data_size, tensor_end)) {
       return false;
     }
-    if (tensor_end > static_cast<uint64_t>(file_size)){
+    if (tensor_end > file_size_bytes) {
       return false;
     }
    }

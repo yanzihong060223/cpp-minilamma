@@ -7,9 +7,11 @@ add_executable(yan_minillama_tests
     kvcache_test.cc
     radix_tree_test.cc
     context_test.cc
+    sampler_test.cc
     terminal_test.cc
     chatsession_test.cc
     prompt_build_test.cc
+    gguf_prompt_build_test.cc
     gguf_test.cc
     gguf_load_test.cc
 )
@@ -19,6 +21,19 @@ target_link_libraries(yan_minillama_tests PRIVATE
 )
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_executable(gguf_inspect gguf_inspect.cc)
+target_link_libraries(gguf_inspect PRIVATE yan_minillama)
+
+add_executable(gguf_generate gguf_generate.cc)
+target_link_libraries(gguf_generate PRIVATE yan_minillama)
+
+add_executable(gguf_run gguf_run.cc)
+target_link_libraries(gguf_run PRIVATE yan_minillama)
+add_test(NAME GgufInteractive
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gguf_run_test.py"
+            "$<TARGET_FILE:gguf_run>" "$<TARGET_FILE:gguf_generate>")
+set_tests_properties(GgufInteractive PROPERTIES TIMEOUT 30)
+
 add_executable(gguf_tokenizer_compare gguf_tokenizer_compare.cc)
 target_link_libraries(gguf_tokenizer_compare PRIVATE yan_minillama)
 add_test(NAME GgufTokenizerExport

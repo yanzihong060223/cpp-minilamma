@@ -112,6 +112,87 @@ BPE 必须先成功 `Load()` 才能编码、解码；成功重载替换全部状
 ./build/test/yan_minillama_tests --gtest_filter='*Tokenizer*'
 ```
 
+### 下载演示模型
+
+在项目根目录运行，默认从 ModelScope 下载 Qwen2-0.5B-Instruct Q8_0：
+
+```bash
+python3 tools/download_demo_model.py
+```
+
+脚本只依赖 Python 标准库，默认保存到当前工作目录下的
+`models/chat/Qwen2-0.5B-Instruct-Q8_0.gguf`，可用于后续真实模型端到端测试。
+参考自 [mini-llama-cpp 下载脚本](https://github.com/CppTrainingHub/mini-llama-cpp/blob/main/scripts/download_demo_model.py)。
+
+可通过 `--dir`、`--file` 指定本地目录和文件名，通过 `--repo`、`--remote-file`
+指定 ModelScope 仓库和远端文件。已有文件以 `GGUF` 开头时跳过下载。
+下载先写入 `.part` 临时文件，检查长度（服务端提供时）和 GGUF 魔数后再替换目标文件；
+失败返回非零退出码并清理临时文件。魔数检查不代表完整模型校验。
+默认目录中的 `.gguf` 和 `.gguf.part` 文件已加入 Git 忽略规则。
+
+### GGUF 文件检查入口
+
+`gguf_inspect` 使用 `GgufRead::load()` 和 `Inspect()` 输出文件头、元数据、
+张量形状、类型、偏移及大小，同时校验文件内的张量边界，不加载权重数据。
+
+```bash
+cmake -S . -B build-smoke-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-smoke-release --target gguf_inspect --parallel 2
+./build-smoke-release/test/gguf_inspect models/chat/Qwen2-0.5B-Instruct-Q8_0.gguf
+```
+
+`--help` 查看用法；加载或检查失败返回非零退出码。
+
+### GGUF 生成测试入口
+
+`gguf_generate` 是独立的单轮生成测试程序，使用实际的 GGUF loader、tokenizer、
+prompt builder、prefill、decode 和贪心采样。启用 `BUILD_TESTING`（默认开启）后构建：
+
+```bash
+cmake -S . -B build
+cmake --build build --target gguf_generate --parallel 2
+./build/test/gguf_generate models/chat/Qwen2-0.5B-Instruct-Q8_0.gguf "你好" 16
+```
+
+第一个参数是模型路径；默认下载位置是 `models/chat/`，请按实际位置替换。
+后两个参数可省略，默认 prompt 为 `你好`、最多生成 16 个 token。
+传 `0` 只检查 prefill；`--help` 查看用法。生成在 EOS 或 token 上限处停止。
+程序校验 token 范围、logits 形状及有限值、上下文长度与推理历史；
+生成文本输出到 stdout，阶段诊断和通过/失败状态输出到 stderr，失败返回非零退出码。
+该入口不加入默认 CTest，运行时需自行提供真实模型。
+
+loader 在缺少 `output.weight` 时使用 `token_embd.weight` 作为输出权重，并保留其量化格式。
+`gguf_generate` 和 `gguf_run` 直接将加载后的模型交给 forward，不再单独预转换权重。
+forward 支持 F32、Q8_0、Q4_0、Q4_1 的线性权重，按类型调用已有转换函数，
+再使用普通 F32 算子计算；F16 线性权重尚不支持。
+目前每个 token 的前向会重复转换权重，仍存在复制和反量化开销。
+
+### GGUF 交互式对话
+
+`gguf_run` 复用 `Terminal` 和 `ChatSession`，每轮用全部已完成消息和当前输入渲染
+GGUF 中的 chat template，重新编码并完整 prefill，然后流式输出 assistant 回复。
+模型、tokenizer 和模板只在启动时加载一次。推荐使用 Release：
+
+```bash
+cmake -S . -B build-smoke-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-smoke-release --target gguf_run --parallel 2
+./build-smoke-release/test/gguf_run models/chat/Qwen2-0.5B-Instruct-Q8_0.gguf 16
+```
+
+模型路径按实际位置替换；第二个参数为每轮最多生成的 token 数，默认 16，必须为正整数。
+输入一行后回车发送；prefill 会显示 `Prefill i/N` 进度，完成后显示 `assistant >` 并输出回复。
+支持 `/help`、`/clear`、`/stats`、`/params`（兼容 `/parmas`）、`/exit`，EOF 也会正常退出。
+空白行不会发送；正常消息保留原始空格。`/clear` 清除消息、token 记录和统计，不重新加载模型。
+生成在 EOS 或本轮上限处停止，成功轮次才写入历史；失败或上下文超限时保留此前历史。
+超限后可缩短输入或执行 `/clear`。每轮独立分配 KV，不复用历史缓存，不自动裁剪消息。
+`/stats` 的 prompt token 数累计每轮完整 prefill 的工作量，生成 token 数不包括 EOS。
+完整聊天路径的测试使用小型 GGUF fixture，不依赖下载模型：
+
+```bash
+cmake --build build-smoke-release --target gguf_run gguf_generate --parallel 2
+ctest --test-dir build-smoke-release -R GgufInteractive --output-on-failure
+```
+
 ### 拆解 GGUF tokenizer
 
 Python 工具只使用标准库，支持小端 GGUF v2/v3，只读取 metadata，不加载权重：
@@ -144,7 +225,7 @@ auto tokenizer = yan_lamma::GetTonizer(
 auto tokenizer = yan_lamma::GetGgufTokenizer("model.gguf");
 ```
 
-两条路径使用相同的字节 BPE 规则，保留特殊 token；都不实现完整模型原生的正则预分词。本项目当前未提供 `build/llama` 命令；后续 GGUF 推理入口应采用路线 B。
+两条路径使用相同的字节 BPE 规则，保留特殊 token；都不实现完整模型原生的正则预分词。上面的 `gguf_generate` 测试入口采用路线 B。
 
 构建测试需要 Python 3。导出与双路径对照测试已接入 CTest：
 

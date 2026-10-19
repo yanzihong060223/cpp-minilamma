@@ -1,8 +1,9 @@
 #pragma once
 #include "include/chatsession.h"
-
+#include "include/gguf.h"
 #include <vector>
 #include <string>
+
 namespace yan_lamma {
 class PromptBuild {
 public:
@@ -15,7 +16,7 @@ private:
  std::string BuildQwen2(const std::vector<ChatMessage>& message); 
  
 };
-
+std::string GetChatTemplate(const std::string& gguf_path);
 
 
 
