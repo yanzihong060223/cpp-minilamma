@@ -15,6 +15,7 @@ add_library(yan_minillama STATIC
     src/kvcache.cc
     src/context.cc
     src/batch.cc
+    src/betch_mark.cc
     src/forward.cc
     src/sampler.cc
     src/radix_tree.cc
