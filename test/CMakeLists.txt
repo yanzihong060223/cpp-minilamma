@@ -1,6 +1,7 @@
 add_executable(yan_minillama_tests
     tensor_test.cc
     quantized_tensor_test.cc
+    test_quant.cc
     load_test.cc
     ops_test.cc
     tokenizer_test.cc

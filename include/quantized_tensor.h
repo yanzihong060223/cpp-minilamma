@@ -7,6 +7,10 @@
 #include <string>
 #include <limits>
 namespace yan_lamma {
+constexpr size_t kQuantBlockSize   = 32;
+constexpr size_t kBytesPerQ80Block = 34;  // fp16 scale + 32 int8
+constexpr size_t kBytesPerQ40Block = 18;  // fp16 scale + 16 nibble bytes
+constexpr size_t kBytesPerQ41Block = 20;  // fp16 scale + fp16 min + 16 nibble bytes
 enum class QuantType {
   kF32,
   kF16,
@@ -14,6 +18,22 @@ enum class QuantType {
   kQ40,
   kQ41,
 };
+struct Block_Q80 {
+    //scale
+    uint16_t d;
+    int8_t qs [32];
+};
+struct Block_Q40 {
+    //scale
+    uint16_t d;
+    uint8_t qs[16];
+};
+struct Block_Q41 {
+    uint16_t d;
+    uint16_t m;
+    uint8_t qs[16];
+};
+static_assert(sizeof(Block_Q80) == sizeof(uint16_t) + kQuantBlockSize, "invailed block q80 size" );
 struct QuanTensor {
 //默认kf32
 QuantType type = QuantType::kF32;
