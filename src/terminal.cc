@@ -35,7 +35,7 @@ void Terminal::PrintHelp() {
               << " /help         Show this help message\n"
               << " /clear        Clear chat history and context\n"
               << " /stats        Show session stats\n"
-              << " /parmas       Show sampler parma\n"
+              << " /params       Show sampler parameters (/parmas also accepted)\n"
               << " /exit         Exit chat\n";
 }
 void Terminal::PrintStats(const ChatSession& session) {

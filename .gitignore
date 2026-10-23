@@ -8,3 +8,8 @@ __pycache__/
 /.clangd
 /.vscode/settings.json
 /Testing/
+
+/models/chat/*.gguf
+/models/chat/*.gguf.part
+/tools/model/chat/*.gguf
+/tools/model/chat/*.gguf.part

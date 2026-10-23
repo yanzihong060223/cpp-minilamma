@@ -326,7 +326,7 @@ Model ModelLoad(const std::string& gguf) {
      auto Load_Weight = [&](const std::string& tensor_name) ->QuanTensor {
         auto it = tensor_maps.find(tensor_name);
         if (it == tensor_maps.end()) {
-            throw std::runtime_error("Missing Tensor");
+            throw std::runtime_error("Missing Tensor: " + tensor_name);
         }
         std::vector<int> shape = MapShape(it->second->shape);
         if (shape.empty()) {
@@ -384,8 +384,9 @@ Model ModelLoad(const std::string& gguf) {
         // 顶层
         model.embedding_data_ = Load_Weight_Tensor("embedding_data_");
         model.final_norm      = Load_Weight_Tensor("final_norm");
-        model.lm_head_        = Load_Weight("lm_head");
-
+        // GGUF may omit output.weight when it shares token_embd.weight.
+        // Load the original quantized tensor rather than duplicating the F32 embedding.
+        model.lm_head_ = Load_Weight(tensor_maps.count("lm_head") ? "lm_head" : "embedding_data_");
         // 每一层
         model.n_layers_.resize(static_cast<size_t>(model.config.layers));
         for (int i = 0; i < model.config.layers; ++i) {

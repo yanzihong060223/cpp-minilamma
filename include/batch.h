@@ -6,9 +6,9 @@ struct Batch {
 std::vector<int> tokens;
 std::vector<int> poss;
 // decode 流程
-Batch Single(int token, int pos);
+static Batch Single(int token, int pos);
 // profill 流程
-Batch FromTokens(std::vector<int>& tokens, int pos);
+static Batch FromTokens(std::vector<int>& tokens, int pos);
 };
 
 
