@@ -12,6 +12,7 @@ add_library(yan_minillama STATIC
     src/tensor.cc
     src/load.cc
     src/quantiezd_tensor.cc
+    src/quant.cc
     src/kvcache.cc
     src/context.cc
     src/batch.cc
