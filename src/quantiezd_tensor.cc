@@ -7,11 +7,6 @@
 #include <string>
 namespace yan_lamma {
 namespace {
-constexpr size_t kQuantBlockSize   = 32;
-constexpr size_t kBytesPerQ80Block = 34;  // fp16 scale + 32 int8
-constexpr size_t kBytesPerQ40Block = 18;  // fp16 scale + 16 nibble bytes
-constexpr size_t kBytesPerQ41Block = 20;  // fp16 scale + fp16 min + 16 nibble bytes
-
 inline uint16_t ReadU16LE(const uint8_t* p) {
     return static_cast<uint16_t>(p[0]) |
            (static_cast<uint16_t>(p[1]) << 8);

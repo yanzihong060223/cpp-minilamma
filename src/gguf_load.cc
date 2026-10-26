@@ -13,10 +13,6 @@
 #include <unordered_map>
 namespace yan_lamma {
 namespace {
-constexpr size_t kQuantBlockSize = 32;
-constexpr size_t kBytesPerQ40Block = 18;  // fp16 scale(2) + 16 nibbles
-constexpr size_t kBytesPerQ41Block = 20;  // fp16 scale + fp16 min + 16 nibbles
-constexpr size_t kBytesPerQ80Block = 34;  // fp16 scale + 32 int8
 constexpr size_t kBytesPerF16Elem  = 2;
 }//namespace
 std:: string MapTensorName(const std::string& gguf_name) {
