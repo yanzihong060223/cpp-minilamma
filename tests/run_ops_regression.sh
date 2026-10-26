@@ -5,8 +5,16 @@ project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="$(mktemp -d /tmp/yan-minillama-ops-test.XXXXXX)"
 trap 'rm -rf -- "$build_dir"' EXIT
 
-sources=(src/tensor.cc src/ops.cc matumal/matuml_ops.cc tests/ops_regression.cc)
-common_flags=(-std=c++17 -Wall -Wextra -Wpedantic -Werror -I "$project_root")
+sources=(
+    src/tensor.cc
+    src/ops.cc
+    src/quant.cc
+    src/quantiezd_tensor.cc
+    matumal/matuml_ops.cc
+    thread_pool/thread_pool.cc
+    tests/ops_regression.cc
+)
+common_flags=(-std=c++17 -Wall -Wextra -Wpedantic -Werror -pthread -I "$project_root")
 
 for compiler in g++ clang++; do
     if ! command -v "$compiler" >/dev/null 2>&1; then

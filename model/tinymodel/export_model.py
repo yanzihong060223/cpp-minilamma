@@ -22,9 +22,30 @@ CONFIG = {
 }
 
 
-def export_model(output_dir: Path, seed: int) -> None:
+def export_model(output_dir: Path, seed: int, json_vocab: bool = False,
+                 config_overrides=None) -> None:
     rng = np.random.RandomState(seed)
     config = dict(CONFIG)
+    if config_overrides is not None:
+        unknown = set(config_overrides) - config.keys()
+        if unknown:
+            raise ValueError(f"Unknown tiny config fields: {sorted(unknown)}")
+        config.update(config_overrides)
+    for name in ("vocab_size", "dim", "hidden_dim", "layers", "n_heads",
+                 "n_kv_heads", "head_dim", "max_seq_len"):
+        if type(config[name]) is not int or not 0 < config[name] <= 2147483647:
+            raise ValueError(f"{name} must be a positive integer")
+    if config["vocab_size"] != 131:
+        raise ValueError("The tiny ASCII/JSON tokenizers require vocab_size=131")
+    if (config["dim"] != config["n_heads"] * config["head_dim"] or
+            config["n_heads"] % config["n_kv_heads"] or config["head_dim"] % 2):
+        raise ValueError("Invalid tiny attention dimensions")
+    for name in ("rope_theta", "rms_norm_eps"):
+        value = config[name]
+        if (type(value) not in (int, float) or not np.isfinite(value) or
+                value <= 0 or value > np.finfo(np.float32).max or
+                np.float32(value) <= 0):
+            raise ValueError(f"{name} must be finite and positive in F32")
     dim = config["dim"]
     hidden = config["hidden_dim"]
     q_dim = config["n_heads"] * config["head_dim"]
@@ -81,6 +102,26 @@ def export_model(output_dir: Path, seed: int) -> None:
         },
         "tensors": metadata,
     }
+    if json_vocab:
+        # Match the existing ASCII tokenizer IDs without changing the weights.
+        vocab = [
+            {"id": i, "context": chr(i), "special": False}
+            for i in range(128)
+        ]
+        vocab.extend([
+            {"id": 128, "context": "<BOS>", "special": True},
+            {"id": 129, "context": "<EOS>", "special": True},
+            {"id": 130, "context": "<UNK>", "special": True},
+        ])
+        vocab_path = output_dir / "vocab.json"
+        vocab_path.write_text(
+            json.dumps(vocab, ensure_ascii=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        manifest["tokenizer"]["type"] = "JsonVocab"
+        manifest["tokenizer"]["pathname"] = "vocab.json"
+        print(f"Wrote {vocab_path}")
+
     json_path = output_dir / "model.json"
     json_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {json_path}")
@@ -93,10 +134,12 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=Path,
                         default=Path(__file__).resolve().parent)
+    parser.add_argument("--json-vocab", action="store_true",
+                        help="Export vocab.json with ASCII-compatible token IDs")
     args = parser.parse_args()
     if not 0 <= args.seed <= 2**32 - 1:
         parser.error("--seed must be between 0 and 2**32 - 1")
-    export_model(args.output_dir, args.seed)
+    export_model(args.output_dir, args.seed, args.json_vocab)
 
 
 if __name__ == "__main__":

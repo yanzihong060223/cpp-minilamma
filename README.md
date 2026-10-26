@@ -1,10 +1,16 @@
 # cpp-minilamma
 
-目前包含 Tensor、CPU 基础算子和 ASCII / JSON 词表 / 字节级 BPE 分词器，使用 C++17。Linear/Matmul 默认使用 Native 普通循环；Threaded、SIMD、ThreadedSIMD 留待后续实现，调用时会抛出异常。
+目前包含 Tensor、CPU 基础算子和 ASCII / JSON 词表 / 字节级 BPE 分词器，使用 C++17。上层 Linear/Matmul 只接收输入和权重，普通浮点版本内部默认分别使用 Native 和 Threaded。需要显式选择执行模式时，调用底层 LinearDispatch/MatmulDispatch；两者都支持 Native 和 Threaded。Linear 还支持 SIMD 和 ThreadedSIMD，按编译目标使用 ARM NEON 或 AVX2/FMA，未启用对应指令集时回退标量点积。Matmul 的 SIMD 和 ThreadedSIMD 尚未实现，调用时会抛出异常。
+
+量化 `LinearQ80`、`LinearQ40`、`LinearQ41` 分别以同名函数实现 NEON、AVX2/FMA 和普通分支，编译时按指令集宏选择，不增加 CMake 开关。SIMD 分支每次处理 8 个元素，在寄存器中解码并乘加，不创建反量化浮点数组；普通分支保留现有 `LinearQuant`。每个输出独立交给 `ParallelFor` 计算，支持一维输入和批量输入，尾块仅访问有效输入。Q40/Q41 的低四位对应块内前 16 个权重，高四位对应后 16 个权重。
+
+量化 Linear 用例按独立 double 点积验证结果，容差为 `1e-5 × max(1, 乘积绝对值之和)`；单线程和多线程结果仍精确比较。用例覆盖 SIMD 分组边界、半块边界、尾块、零比例，以及 Q41 的非零最小值。
 
 ## 目录
 
 ```text
+app/                      mini-llama 命令入口
+scripts/                  NumPy golden-logits 数值参考和回归脚本
 include/                  Tensor、算子和分词器接口
 src/                      Tensor、基础算子和分词器实现
 matumal/                  Linear、Matmul 及执行模式分发
@@ -16,7 +22,7 @@ build/                    默认构建结果
 
 ## 构建与测试
 
-需要 CMake 3.20 以上和支持 C++17 的编译器。Google Test 直接使用项目内克隆的源码，无需安装到系统。
+需要 CMake 3.20 以上和支持 C++17 的编译器。Google Test 直接使用项目内克隆的源码，无需安装到系统。CLI 集成测试复用 tiny exporter，需要 Python 3 和 NumPy。
 
 如果重新克隆本项目，先获取依赖（已有这个目录时无需再执行）：
 
@@ -32,7 +38,7 @@ cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
 ```
 
-CMake 将源码构建为 `yan_minillama` 静态库，Google Test 测试程序为 `build/test/yan_minillama_tests`。CTest 会分别列出每个测试用例。
+CMake 将源码构建为 `yan_minillama` 静态库，命令程序为 `build/mini-llama`，Google Test 测试程序为 `build/test/yan_minillama_tests`。CTest 会分别列出每个测试用例，项目测试名统一以 `mini-llama-tests.` 开头。
 
 也可以直接运行或筛选测试：
 
@@ -43,6 +49,111 @@ CMake 将源码构建为 `yan_minillama` 静态库，Google Test 测试程序为
 ```
 
 Linear 的输入支持 `[in]` 和 `[1, in]`，输出分别为 `[out]` 和 `[1, out]`；多行二维输入会被拒绝。
+
+## SIMD 章节验证与 benchmark
+
+普通浮点 `Linear()` 默认保持 Native；显式 `LinearDispatch` 可选择 Native、Threaded、SIMD、ThreadedSIMD。`linear_all_modes_match` 在同一份正负混合输入上验证四种模式，覆盖向量边界、尾部、两种输入形状以及 1/4 线程。Native/Threaded 和 SIMD/ThreadedSIMD 分别精确比较，各模式对独立 double 点积使用 `1e-5 × max(1, 乘积绝对值之和)` 容差。65 个输出使四线程分发实际进入并行区间。
+
+先复用现有 exporter 准备随机 tiny 模型及 JSON 词表，默认 seed 为 42：
+
+```bash
+python3 model/tinymodel/export_model.py --output-dir models/tiny --json-vocab
+```
+
+输出包含 `model.json`、`model.bin` 和 `vocab.json`。JSON 词表与已有 ASCII tokenizer 使用相同的 131 个 ID：ASCII 为 0–127，BOS/EOS/UNK 为 128/129/130。不加 `--json-vocab` 时仍使用原来的 ASCII 导出流程。生成文件已加入 Git 忽略规则。
+
+在支持 AVX2 和 FMA 的 x86 主机上执行：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-mavx2 -mfma"
+cmake --build build -j4
+ctest --test-dir build -R mini-llama-tests --output-on-failure --no-tests=error
+
+./build/mini-llama bench models/tiny \
+  --tokenizer models/tiny/vocab.json \
+  --prompt hello \
+  --n-predict 4 \
+  --threads 4 \
+  --verbose
+```
+
+`bench` 加载模型目录里的 JSON/BIN，调用现有 loader、tokenizer、线程控制和 `RunBetchMrk`；原有 GGUF benchmark 入口继续保留。参数默认值为 `--prompt hello --n-predict 4 --threads 0`；线程数 0 自动选择，`-threads` 是 `--threads` 的别名。`--linear-mode native|threaded|simd|threaded-simd` 可显式选择本次进程的 Linear 模式，未指定时仍为 Native。显式 tokenizer 路径相对于工作目录；省略该参数时使用模型元数据，其中的相对路径按模型目录解析。
+
+输出包含 `threads:4`、默认的 `linear_mode:Native`、`compiled_simd`、`tokens/s(total)` 和 `tokens/s(Decode)`。线程数表示配置，小任务仍可能按现有阈值串行执行；`compiled_simd` 表示编译进来的后端，实际模式以 `linear_mode` 为准。固定长度生成不因 EOS 提前结束，只受剩余上下文容量限制；`hello` 去掉自动追加的 EOS 后有 6 个 prompt token，生成 4 个 token 对应 3 次 decode forward。`--n-predict 0` 只测 prefill，0/1 个生成 token 的 decode 吞吐量为零。总吞吐量为生成数除以 prefill+decode 耗时，decode 吞吐量为 decode forward 数除以 decode 耗时。verbose 的 decode 张量打印计入 decode 耗时，tiny 模型的短跑结果只用于验证流程和输出。
+
+三条点积路径按编译条件选择，没有运行时 CPU 探测：
+
+| 路径 | 条件 |
+|---|---|
+| NEON | 定义 `__ARM_NEON` 或 `__ARM_NEON__`；AArch64 通常默认启用 |
+| AVX2/FMA | 同时定义 `__AVX2__` 和 `__FMA__` |
+| 标量回退 | 两组条件都不满足；仅启用 AVX2 而没有 FMA 也回退 |
+
+在 x86 上可用独立目录验证标量回退，避免复用不同指令集的构建产物：
+
+```bash
+cmake -S . -B build-scalar -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS="-mno-avx2 -mno-fma"
+cmake --build build-scalar -j4
+ctest --test-dir build-scalar -R mini-llama-tests --output-on-failure --no-tests=error
+./build-scalar/mini-llama bench models/tiny --tokenizer models/tiny/vocab.json --prompt hello --n-predict 4 --threads 4 --verbose
+```
+
+NEON 的运行验证需要 ARM 环境。Linear 的输入和每行权重连续，计算是重复、独立的点积，适合向量乘加；当前通用 Matmul 内循环按列读取右矩阵，存在跨步访问，因此公开 `Matmul()` 继续使用 Threaded。Matmul 也能进行 SIMD 优化，但需要相应的循环组织、打包、转置或分块；目前显式请求其 SIMD 模式会报未实现。
+
+## Python golden-logits 数值参考
+
+`scripts/reference_forward.py` 独立读取 JSON manifest 和 little-endian F32 权重，用 NumPy 实现 embedding、RMSNorm、Q/K/V、Normal RoPE、持久 K/V cache、GQA attention、SwiGLU、final norm 和 lm_head。`forward_token(model, pos, token_id)` 只处理一个 token，显式按 pos 写入同一个缓存；不调用 C++ 或读取 C++ logits 计算参考。权重方向为 `[out,in]`，RMSNorm 规约和 RoPE 旋转使用 double 中间计算，其他激活和缓存保持 float32。
+
+基准复用本地 tiny 的 **131 词表、BOS=128**。golden 入口只接受 ASCII prompt，编码为 BOS 加字符 ID，不追加 EOS，也不进行词表字符串合并。`hello` 对应 `[128,104,101,108,108,111]`。普通 `Linear()` 默认保持 Native；`SetDefaultMatulMode` 和 `SetThreadNum` 仅在推理开始前设置，不能在推理期间修改。
+
+一键回归自动在临时目录导出 seed=42 的模型，再串起 C++ 导出、Python 生成和比较，无需提前准备 `models/tiny`：
+
+```bash
+cmake --build build -j4
+ctest --test-dir build -R golden-logits --output-on-failure --no-tests=error
+
+# 也可单独运行
+python3 scripts/test_golden.py --binary ./build/mini-llama
+python3 scripts/test_threaded_cli.py --binary ./build/mini-llama
+```
+
+CTest 包含主链路、线程对拍和比较器故障注入三个测试，依赖 Python 3 与 NumPy。成功时清理临时产物，失败时保留并打印路径。主链路覆盖四种模式；另有 4 个 query head、2 个 KV head、非默认 eps 和 rope_theta 的 GQA 模型。Threaded/ThreadedSIMD 的 1/4 线程对拍要求每步 logits 字节一致。C++ 用例额外验证多 token ForwardBatch 与逐 token 执行的 logits、K/V cache、pos 和 token history 一致。
+
+手动闭环先准备模型，再使用新的空输出目录。两端可以共用目录，但已有本端结果会被拒绝覆盖；重复手动运行时应换一个空目录：
+
+```bash
+python3 model/tinymodel/export_model.py --output-dir models/tiny --json-vocab
+
+./build/mini-llama \
+  --config models/tiny/model.json --model models/tiny/model.bin \
+  --prompt hello --n-predict 16 --linear-mode native --threads 1 \
+  --dump-logits artifacts/golden
+
+python3 scripts/make_golden.py \
+  --config models/tiny/model.json --weights models/tiny/model.bin \
+  --prompt hello -n 16 --output-dir artifacts/golden
+
+python3 scripts/compare_logits.py \
+  --cpp-dir artifacts/golden --py-dir artifacts/golden --vocab-size 131
+```
+
+产物为 `logits_stepN.bin`、`python_logits_stepN.bin`、`generation_tokens.txt`、`python_generation_tokens.txt`、`cpp_run.json` 和 `python_run.json`。每份 logits 包含 131 个 little-endian float32，共 524 字节；token 文件使用空白分隔的十进制 ID。元数据最后写入，记录 prompt token、请求生成数、原始上下文容量、实际生成数和 step 数。
+
+令 P 为含 BOS 的 prompt 长度，G 为 `min(n_predict, max_seq_len - P)`。第一个生成 token 来自最后一次 prefill，只对前 G−1 个生成 token继续 forward，总 step 数为 `P + max(G−1,0)`。`hello -n 16` 有 **21 份 logits（step0–20）和 16 个生成 ID**；`-n 0/1` 都只有 6 份 logits，生成文件分别为空或只有一个 ID。生成不因 EOS 提前结束。
+
+比较器分三类检查，只有全部通过才输出 `RESULT: ALL PASSED`，任何失败返回非零：
+
+| 检查 | 判定标准 |
+|---|---|
+| 文件集合 | 从运行参数推导完整编号，缺失、额外、断档、非规范编号、错误长度或缺元数据均失败；双方同时缺末步也失败 |
+| logits | 拒绝 NaN/Inf；用 float64 计算差值，最大绝对和最大相对误差分别都必须 ≤ `1e-4`；相对误差仅统计 `abs(py) >= 1e-3`，空集合取 0；每步 top-1 一致 |
+| 采样 | 两端序列一致，长度和 ID 范围正确；每枚 ID 还须等于本端对应 logits 的 greedy argmax，平局选最小 ID |
+
+不使用相加容差的 `allclose` 代替两个独立阈值。一键脚本从输入配置独立计算预期 step 数并传给比较器，防止两边共同截断而误通过。失败报告包含 step、prefill/decode、pos、输入 token、最大误差所在 token、两侧值和 top-1。故障注入覆盖文件缺失、错误长度、NaN/Inf、阈值边界、top-1 和两端相同错误生成序列。
+
+改动触及 **ForwardBatch/ForwardToken、RMSNorm、RoPE、KV cache、sampler、matmul dispatch、多线程或 SIMD** 时，必须运行 `golden-logits`。所有 step 发散时先查权重读取、eps 和矩阵方向；仅 decode 发散时先查 pos、缓存写入和 GQA 分组；仅 top-1 分叉时查候选接近程度和平局规则；Native 通过而优化模式失败时查向量尾部、累加顺序、线程切片和写回。不要通过放宽阈值掩盖实现错误。
+
+本回归只判定 JSON/BIN tiny 的 CPU F32、Normal RoPE 路径；量化、NeoX/GGUF 和其他后端保留各自测试。SIMD 实际执行 NEON、AVX2/FMA 还是标量回退，由前文的编译条件决定。
 
 ## ASan / UBSan
 

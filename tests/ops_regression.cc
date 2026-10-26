@@ -1,4 +1,5 @@
 #include "include/ops.h"
+#include "matumal/matuml_ops.h"
 
 #include <algorithm>
 #include <cmath>
@@ -142,9 +143,18 @@ void TestRmsNorm() {
 void TestLinearAndMatmul() {
     const Tensor x = MakeTensor({3}, {1, 2, 3});
     const Tensor weight = MakeTensor({2, 3}, {1, 0, 1, 0, 1, 1});
-    Values(yan_lamma::Linear(x, weight), {2}, {4, 5}, "Linear default Native");
+    const Tensor linear = yan_lamma::Linear(x, weight);
+    Values(linear, {2}, {4, 5}, "Linear default Native");
     Values(yan_lamma::LinearDispatch(x, weight, MatulMode::Native),
            {2}, {4, 5}, "LinearDispatch Native");
+    const Tensor threaded_linear =
+        yan_lamma::LinearDispatch(x, weight, MatulMode::Threaded);
+    Require(threaded_linear.shape == linear.shape && threaded_linear.data == linear.data,
+            "LinearDispatch Threaded matches public Linear");
+    for (MatulMode mode : {MatulMode::SIMD, MatulMode::ThreadedSIMD}) {
+        Values(yan_lamma::LinearDispatch(x, weight, mode),
+               {2}, {4, 5}, "LinearDispatch SIMD modes");
+    }
     Values(yan_lamma::Linear(MakeTensor({1, 3}, {1, 2, 3}), weight),
            {1, 2}, {4, 5}, "Linear one-row input");
     Values(yan_lamma::LinearDispatch(MakeTensor({1, 3}, {1, 2, 3}), weight,
@@ -152,10 +162,14 @@ void TestLinearAndMatmul() {
            {1, 2}, {4, 5}, "LinearDispatch one-row input");
     const Tensor matrix = MakeTensor({2, 3}, {1, 2, 3, 4, 5, 6});
     const Tensor b = MakeTensor({3, 2}, {1, 0, 0, 1, 1, 1});
-    Values(yan_lamma::Matmul(matrix, b), {2, 2}, {4, 5, 10, 11},
-           "Matmul non-square inputs");
+    const Tensor matmul = yan_lamma::Matmul(matrix, b);
+    Values(matmul, {2, 2}, {4, 5, 10, 11}, "Matmul default Threaded");
     Values(yan_lamma::MatmulDispatch(matrix, b, MatulMode::Native),
            {2, 2}, {4, 5, 10, 11}, "MatmulDispatch Native");
+    const Tensor threaded_matmul =
+        yan_lamma::MatmulDispatch(matrix, b, MatulMode::Threaded);
+    Require(threaded_matmul.shape == matmul.shape && threaded_matmul.data == matmul.data,
+            "MatmulDispatch Threaded matches public Matmul");
     Require(yan_lamma::DefaultMatulMode() == MatulMode::Native,
             "DefaultMatulMode stays Native");
 }
@@ -203,17 +217,15 @@ void TestInvalidMatrices() {
     Throws([&] { yan_lamma::MatmulDispatch(matrix, mismatch, MatulMode::Native); },
            "MatmulDispatch rejects inner-dimension mismatch");
     const Tensor vector = MakeTensor({2}, {1, 2});
-    for (MatulMode mode : {MatulMode::Threaded, MatulMode::SIMD,
-                           MatulMode::ThreadedSIMD, static_cast<MatulMode>(999)}) {
-        Throws([&] { yan_lamma::Linear(vector, matrix, mode); },
-               "Linear rejects unsupported/invalid mode");
-        Throws([&] { yan_lamma::LinearDispatch(vector, matrix, mode); },
-               "LinearDispatch rejects unsupported/invalid mode");
-        Throws([&] { yan_lamma::Matmul(matrix, matrix, mode); },
-               "Matmul rejects unsupported/invalid mode");
+    for (MatulMode mode : {MatulMode::SIMD, MatulMode::ThreadedSIMD}) {
         Throws([&] { yan_lamma::MatmulDispatch(matrix, matrix, mode); },
-               "MatmulDispatch rejects unsupported/invalid mode");
+               "MatmulDispatch rejects unsupported SIMD mode");
     }
+    const MatulMode invalid_mode = static_cast<MatulMode>(999);
+    Throws([&] { yan_lamma::LinearDispatch(vector, matrix, invalid_mode); },
+           "LinearDispatch rejects invalid mode");
+    Throws([&] { yan_lamma::MatmulDispatch(matrix, matrix, invalid_mode); },
+           "MatmulDispatch rejects invalid mode");
 }
 
 void TestRandomReferences() {

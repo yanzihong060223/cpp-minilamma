@@ -1,8 +1,14 @@
 #include "include/ops.h"
+#include "matumal/matuml_ops.h"
+#include "include/quant.h"
 #include "include/tensor.h"
 
+#include <cstdint>
+#include <cstring>
 #include <stdexcept>
 #include <cmath>
+#include <type_traits>
+#include <vector>
 namespace yan_lamma {
 namespace {
     const char* CallerName(const char* call) {
@@ -14,6 +20,38 @@ namespace {
                              std::to_string(expected) + "D tensor, got " + T. ShapeToString()
                             );
         }
+    }
+
+    template<typename BlockType>
+    std::vector<BlockType> ReadQuantBlocks(
+        const QuanTensor& weight, const std::vector<uint8_t>& data,
+        std::size_t bytes_per_block) {
+        if (weight.shape.size() != 2 || weight.shape[0] <= 0 ||
+            weight.shape[1] <= 0 || weight.shape[1] % kQuantBlockSize != 0) {
+            throw std::runtime_error("Linear: invalid quantized weight shape");
+        }
+        const std::size_t block_count = weight.GetNumSize() / kQuantBlockSize;
+        if (data.size() % bytes_per_block != 0 ||
+            data.size() / bytes_per_block != block_count) {
+            throw std::runtime_error("Linear: quantized weight data size mismatch");
+        }
+
+        std::vector<BlockType> blocks(block_count);
+        for (std::size_t i = 0; i < block_count; ++i) {
+            const uint8_t* bytes = data.data() + i * bytes_per_block;
+            auto& block = blocks[i];
+            // GGUF 的 FP16 字段按小端保存，逐字节读取避免对齐和字节序问题。
+            block.d = static_cast<uint16_t>(bytes[0]) |
+                      (static_cast<uint16_t>(bytes[1]) << 8);
+            if constexpr (std::is_same_v<BlockType, Block_Q41>) {
+                block.m = static_cast<uint16_t>(bytes[2]) |
+                          (static_cast<uint16_t>(bytes[3]) << 8);
+                std::memcpy(block.qs, bytes + 4, sizeof(block.qs));
+            } else {
+                std::memcpy(block.qs, bytes + 2, sizeof(block.qs));
+            }
+        }
+        return blocks;
     }
 }
 Tensor ElementwiseMul(const Tensor& a, const Tensor& b) {
@@ -42,10 +80,10 @@ size_t ArgMax(const Tensor& a) {
     }
     return res;
 }
-Tensor Matmul(const Tensor& a, const Tensor& b,  MatulMode mode) {
+Tensor Matmul(const Tensor& a, const Tensor& b) {
     CheckDims(a, 2, "Matmul");
     CheckDims(b, 2, "Matmul");
-    return MatmulDispatch(a, b, mode);
+    return MatmulDispatch(a, b, MatulMode::Threaded);
 }
 
 Tensor RmsNorm(const Tensor& x, const Tensor& weight, float eps) {
@@ -118,8 +156,29 @@ Tensor SwiGlu(const Tensor& gate, const Tensor& up) {
     Tensor gate_silu = Silu(gate);
     return  ElementwiseMul(gate_silu, up);
 }
-Tensor Linear(const Tensor& a, const Tensor& b, MatulMode mode) {
-    return LinearDispatch(a, b, mode);
+Tensor Linear(const Tensor& a, const Tensor& b) {
+    return LinearDispatch(a, b, DefaultMatulMode());
+}
+
+Tensor Linear(const Tensor& x, const QuanTensor& weight) {
+    switch (weight.type) {
+        case QuantType::kF32:
+            return Linear(x, ToTensor(weight));
+        case QuantType::kQ80:
+            return LinearQ80(x, ReadQuantBlocks<Block_Q80>(
+                                    weight, weight.kQ80_data, kBytesPerQ80Block),
+                             weight.shape);
+        case QuantType::kQ40:
+            return LinearQ40(x, ReadQuantBlocks<Block_Q40>(
+                                    weight, weight.kQ40_data, kBytesPerQ40Block),
+                             weight.shape);
+        case QuantType::kQ41:
+            return LinearQ41(x, ReadQuantBlocks<Block_Q41>(
+                                    weight, weight.kQ41_data, kBytesPerQ41Block),
+                             weight.shape);
+        default:
+            throw std::runtime_error("Linear: unsupported quantization type");
+    }
 }
 
 void Rope(Tensor& q, Tensor& k, int pos, float theta, RopeType rope_type) {

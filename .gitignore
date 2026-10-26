@@ -7,9 +7,13 @@ __pycache__/
 /.clang-tidy
 /.clangd
 /.vscode/settings.json
+/src/.claude/settings.local.json
 /Testing/
 
 /models/chat/*.gguf
 /models/chat/*.gguf.part
 /tools/model/chat/*.gguf
 /tools/model/chat/*.gguf.part
+
+/models/tiny/
+/artifacts/golden/

@@ -8,6 +8,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(YAN_MINILLAMA_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
+find_package(Threads REQUIRED)
+
 add_library(yan_minillama STATIC
     src/tensor.cc
     src/load.cc
@@ -31,8 +33,13 @@ add_library(yan_minillama STATIC
     src/gguf_load.cc
     src/gguf_tokenizer.cc
     matumal/matuml_ops.cc
+    thread_pool/thread_pool.cc
 )
 target_include_directories(yan_minillama PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(yan_minillama PUBLIC Threads::Threads)
+
+add_executable(mini-llama app/main.cc)
+target_link_libraries(mini-llama PRIVATE yan_minillama)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(yan_minillama PRIVATE -Wall -Wextra -Wpedantic)
