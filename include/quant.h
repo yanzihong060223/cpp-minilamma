@@ -6,6 +6,9 @@
 #include <vector>
 
 namespace yan_lamma {
+    // 以下块数组接口按最后一维分行，每行独立分成 32 元素块，尾块补浮点零后量化。
+    // 反量化与 LinearQxx/MatmulQxx 需要原始 shape，补位不参与输出或点积。
+    // 此约定适用于 vector<Block_Qxx>，QuanTensor 原始字节入口仍使用原有布局。
     //Tensor To Q80 Tensor
     std::vector<Block_Q80> TensorToQ80(const Tensor& tensor);
     // Q80 to Tensor

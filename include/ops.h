@@ -1,7 +1,6 @@
 #pragma once
 #include "include/tensor.h"
 #include "include/model.h"
-#include "matumal/matuml_ops.h"
 #include "include/quantized_tensor.h"
 
 #include <cmath>
@@ -11,10 +10,11 @@ Tensor ElementwiseMul(const Tensor& a, const Tensor& b);
 //返回最大元素下标；相同最大值保留第一个下标，拒绝空输入
 size_t ArgMax(const Tensor& a);
 //输入 [in] 或 [1, in]，权重 [out, in]；输出 [out] 或 [1, out]
-Tensor Linear(const Tensor& a, const Tensor& b, MatulMode mode = DefaultMatulMode());
+Tensor Linear(const Tensor& a, const Tensor& b);
+// QuanTensor 权重入口，支持 F32、Q80、Q40 和 Q41。
 Tensor Linear(const Tensor& x, const QuanTensor& weight);
-//矩阵相乘：[m, k] x [k, n] -> [m, n]
-Tensor Matmul(const Tensor& a, const Tensor& b, MatulMode mode = DefaultMatulMode());
+//矩阵相乘：[m, k] x [k, n] -> [m, n]，默认使用 Threaded
+Tensor Matmul(const Tensor& a, const Tensor& b);
 //一维 RMS 归一化；x/weight 维度一致，eps 有限且非负
 Tensor RmsNorm(const Tensor& x, const Tensor& weight, float eps);
 // 把分数转换成和为1的关注权重

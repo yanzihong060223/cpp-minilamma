@@ -1,4 +1,6 @@
 #include "include/ops.h"
+#include "matumal/matuml_ops.h"
+#include "thread_pool/thread_pool.h"
 
 #include <gtest/gtest.h>
 
@@ -16,6 +18,10 @@ namespace {
 
 using yan_lamma::MatulMode;
 using yan_lamma::Tensor;
+
+struct RestoreAutomaticThreadCount {
+    ~RestoreAutomaticThreadCount() { yan_lamma::SetThreadNum(0); }
+};
 
 Tensor MakeTensor(std::vector<int> shape, std::vector<float> values) {
     Tensor tensor(shape);
@@ -226,8 +232,11 @@ TEST(LinearTest, RejectsInvalidInputAndMultirowBatch) {
     for (const auto& named : cases) {
         SCOPED_TRACE(named.first);
         EXPECT_THROW(yan_lamma::Linear(named.second, weight), std::invalid_argument);
-        EXPECT_THROW(yan_lamma::LinearDispatch(named.second, weight, MatulMode::Native),
-                     std::invalid_argument);
+        for (const auto mode : {MatulMode::Native, MatulMode::Threaded}) {
+            SCOPED_TRACE(static_cast<int>(mode));
+            EXPECT_THROW(yan_lamma::LinearDispatch(named.second, weight, mode),
+                         std::invalid_argument);
+        }
     }
 }
 
@@ -236,13 +245,18 @@ TEST(LinearTest, RejectsInvalidWeights) {
     for (const auto& named : InvalidMatrices()) {
         SCOPED_TRACE(named.first);
         EXPECT_THROW(yan_lamma::Linear(x, named.second), std::invalid_argument);
-        EXPECT_THROW(yan_lamma::LinearDispatch(x, named.second, MatulMode::Native),
-                     std::invalid_argument);
+        for (const auto mode : {MatulMode::Native, MatulMode::Threaded}) {
+            SCOPED_TRACE(static_cast<int>(mode));
+            EXPECT_THROW(yan_lamma::LinearDispatch(x, named.second, mode),
+                         std::invalid_argument);
+        }
     }
     const Tensor wrong_inner_dimension = MakeTensor({2, 3}, {1, 2, 3, 4, 5, 6});
     EXPECT_THROW(yan_lamma::Linear(x, wrong_inner_dimension), std::invalid_argument);
-    EXPECT_THROW(yan_lamma::LinearDispatch(x, wrong_inner_dimension, MatulMode::Native),
-                 std::invalid_argument);
+    for (const auto mode : {MatulMode::Native, MatulMode::Threaded}) {
+        EXPECT_THROW(yan_lamma::LinearDispatch(x, wrong_inner_dimension, mode),
+                     std::invalid_argument);
+    }
 }
 
 TEST(MatmulTest, MultipliesNonSquareMatrices) {
@@ -257,10 +271,13 @@ TEST(MatmulTest, RejectsInvalidShapeOrStorageOnEitherInput) {
         SCOPED_TRACE(named.first);
         EXPECT_THROW(yan_lamma::Matmul(named.second, valid), std::exception);
         EXPECT_THROW(yan_lamma::Matmul(valid, named.second), std::exception);
-        EXPECT_THROW(yan_lamma::MatmulDispatch(named.second, valid, MatulMode::Native),
-                     std::invalid_argument);
-        EXPECT_THROW(yan_lamma::MatmulDispatch(valid, named.second, MatulMode::Native),
-                     std::invalid_argument);
+        for (const auto mode : {MatulMode::Native, MatulMode::Threaded}) {
+            SCOPED_TRACE(static_cast<int>(mode));
+            EXPECT_THROW(yan_lamma::MatmulDispatch(named.second, valid, mode),
+                         std::invalid_argument);
+            EXPECT_THROW(yan_lamma::MatmulDispatch(valid, named.second, mode),
+                         std::invalid_argument);
+        }
     }
 }
 
@@ -268,10 +285,12 @@ TEST(MatmulTest, RejectsMismatchedInnerDimensions) {
     const Tensor a = MakeTensor({2, 2}, {1, 2, 3, 4});
     const Tensor b = MakeTensor({3, 2}, {1, 2, 3, 4, 5, 6});
     EXPECT_THROW(yan_lamma::Matmul(a, b), std::invalid_argument);
-    EXPECT_THROW(yan_lamma::MatmulDispatch(a, b, MatulMode::Native), std::invalid_argument);
+    for (const auto mode : {MatulMode::Native, MatulMode::Threaded}) {
+        EXPECT_THROW(yan_lamma::MatmulDispatch(a, b, mode), std::invalid_argument);
+    }
 }
 
-TEST(MatmulDispatchTest, DefaultsToNativeAndReturnsNativeResults) {
+TEST(MatmulDispatchTest, ExplicitNativeModeReturnsExpectedResults) {
     EXPECT_EQ(yan_lamma::DefaultMatulMode(), MatulMode::Native);
     const Tensor x = MakeTensor({3}, {1, 2, 3});
     const Tensor row = MakeTensor({1, 3}, {1, 2, 3});
@@ -284,19 +303,252 @@ TEST(MatmulDispatchTest, DefaultsToNativeAndReturnsNativeResults) {
                  {2, 2}, {4, 5, 10, 11});
 }
 
+TEST(MatmulDispatchTest, ThreadedLinearMatchesNativeAndDoubleReference) {
+    RestoreAutomaticThreadCount restore_threads;
+    for (const int out_features : {3, 65}) {
+        SCOPED_TRACE(out_features);
+        Tensor weight({out_features, 64});
+        for (std::size_t i = 0; i < weight.data.size(); ++i) {
+            weight.data[i] = 0.8f * std::sin(static_cast<float>(i) * 0.13f) - 0.2f;
+        }
+        for (const auto& shape : {std::vector<int>{64}, std::vector<int>{1, 64}}) {
+            SCOPED_TRACE(::testing::PrintToString(shape));
+            Tensor input(shape);
+            for (std::size_t i = 0; i < input.data.size(); ++i) {
+                input.data[i] = 0.7f * std::cos(static_cast<float>(i) * 0.23f);
+            }
+            const Tensor native =
+                yan_lamma::LinearDispatch(input, weight, MatulMode::Native);
+            const Tensor default_result = yan_lamma::Linear(input, weight);
+            ASSERT_EQ(default_result.shape, native.shape);
+            EXPECT_EQ(default_result.data, native.data);
+            for (const int threads : {1, 3}) {
+                SCOPED_TRACE(threads);
+                yan_lamma::SetThreadNum(threads);
+                const Tensor actual =
+                    yan_lamma::LinearDispatch(input, weight, MatulMode::Threaded);
+                ASSERT_EQ(actual.shape, native.shape);
+                ASSERT_EQ(actual.data.size(), native.data.size());
+                EXPECT_EQ(actual.data, native.data);
+                for (int out = 0; out < out_features; ++out) {
+                    double expected = 0.0;
+                    for (int k = 0; k < 64; ++k) {
+                        expected += static_cast<double>(input.data[k]) *
+                                    weight.At2(out, k);
+                    }
+                    ExpectNearDouble(actual.data[out], expected);
+                }
+            }
+        }
+    }
+}
+
+TEST(MatmulDispatchTest, SimdLinearMatchesDoubleReferenceAcrossVectorTails) {
+    RestoreAutomaticThreadCount restore_threads;
+    for (const int in_features : {1, 4, 8, 9, 16, 17, 33}) {
+        SCOPED_TRACE(in_features);
+        for (const int out_features : {3, 65}) {
+            SCOPED_TRACE(out_features);
+            Tensor weight({out_features, in_features});
+            for (int out = 0; out < out_features; ++out) {
+                for (int k = 0; k < in_features; ++k) {
+                    weight.At2(out, k) =
+                        0.2f + 0.01f * out + 0.03f * (k % 5);
+                }
+            }
+            for (const auto& shape : {std::vector<int>{in_features},
+                                      std::vector<int>{1, in_features}}) {
+                SCOPED_TRACE(::testing::PrintToString(shape));
+                Tensor input(shape);
+                for (int k = 0; k < in_features; ++k) {
+                    input.data[k] = 0.25f + 0.125f * (k % 7);
+                }
+                // 尾部也保留非零贡献，检查不足一个向量的标量收尾。
+                input.data.back() = 3.0f;
+
+                std::vector<double> expected(out_features, 0.0);
+                for (int out = 0; out < out_features; ++out) {
+                    for (int k = 0; k < in_features; ++k) {
+                        expected[out] += static_cast<double>(input.data[k]) *
+                                         weight.At2(out, k);
+                    }
+                }
+                const std::vector<int> output_shape = shape.size() == 1
+                    ? std::vector<int>{out_features}
+                    : std::vector<int>{1, out_features};
+
+                const Tensor simd =
+                    yan_lamma::LinearDispatch(input, weight, MatulMode::SIMD);
+                ExpectTensor(simd, output_shape, expected);
+                for (const int threads : {1, 3}) {
+                    SCOPED_TRACE(threads);
+                    yan_lamma::SetThreadNum(threads);
+                    const Tensor threaded = yan_lamma::LinearDispatch(
+                        input, weight, MatulMode::ThreadedSIMD);
+                    ExpectTensor(threaded, output_shape, expected);
+                    EXPECT_EQ(threaded.data, simd.data);
+                }
+            }
+        }
+    }
+}
+
+TEST(MatmulDispatchTest, linear_all_modes_match) {
+    RestoreAutomaticThreadCount restore_threads;
+    EXPECT_EQ(yan_lamma::DefaultMatulMode(), MatulMode::Native);
+
+    for (const int in_features : {1, 3, 4, 5, 7, 8, 9, 16, 17, 33, 64, 86}) {
+        SCOPED_TRACE(in_features);
+        for (const int out_features : {3, 65}) {
+            SCOPED_TRACE(out_features);
+            Tensor weight({out_features, in_features});
+            for (int out = 0; out < out_features; ++out) {
+                for (int k = 0; k < in_features; ++k) {
+                    const float magnitude =
+                        0.1f + 0.03f * ((k * 5 + out) % 17);
+                    weight.At2(out, k) = (out + k) % 2 == 0
+                        ? magnitude : -magnitude;
+                }
+            }
+
+            for (const auto& shape : {std::vector<int>{in_features},
+                                      std::vector<int>{1, in_features}}) {
+                SCOPED_TRACE(::testing::PrintToString(shape));
+                Tensor input(shape);
+                for (int k = 0; k < in_features; ++k) {
+                    input.data[k] = 0.9f * std::sin(k * 0.31f) -
+                                    0.4f * std::cos(k * 0.11f);
+                }
+                // A nonzero final input and weight make a skipped tail visible.
+                input.data.back() = -1.75f;
+
+                std::vector<double> expected(out_features, 0.0);
+                std::vector<double> sum_abs(out_features, 0.0);
+                for (int out = 0; out < out_features; ++out) {
+                    for (int k = 0; k < in_features; ++k) {
+                        const double product =
+                            static_cast<double>(input.data[k]) *
+                            static_cast<double>(weight.At2(out, k));
+                        expected[out] += product;
+                        sum_abs[out] += std::abs(product);
+                    }
+                }
+                const std::vector<int> output_shape = shape.size() == 1
+                    ? std::vector<int>{out_features}
+                    : std::vector<int>{1, out_features};
+
+                for (const int threads : {1, 4}) {
+                    SCOPED_TRACE(threads);
+                    yan_lamma::SetThreadNum(threads);
+                    // 65 outputs exceed ParallelFor's four-thread threshold.
+                    const Tensor native = yan_lamma::LinearDispatch(
+                        input, weight, MatulMode::Native);
+                    const Tensor threaded = yan_lamma::LinearDispatch(
+                        input, weight, MatulMode::Threaded);
+                    const Tensor simd = yan_lamma::LinearDispatch(
+                        input, weight, MatulMode::SIMD);
+                    const Tensor threaded_simd = yan_lamma::LinearDispatch(
+                        input, weight, MatulMode::ThreadedSIMD);
+                    const Tensor public_result = yan_lamma::Linear(input, weight);
+
+                    EXPECT_EQ(threaded.data, native.data);
+                    EXPECT_EQ(threaded_simd.data, simd.data);
+                    EXPECT_EQ(public_result.data, native.data);
+
+                    const std::pair<const char*, const Tensor*> results[] = {
+                        {"Native", &native},
+                        {"Threaded", &threaded},
+                        {"SIMD", &simd},
+                        {"ThreadedSIMD", &threaded_simd},
+                        {"public Linear", &public_result},
+                    };
+                    for (const auto& result : results) {
+                        SCOPED_TRACE(result.first);
+                        ASSERT_EQ(result.second->shape, output_shape);
+                        ASSERT_EQ(result.second->data.size(), expected.size());
+                        for (int out = 0; out < out_features; ++out) {
+                            SCOPED_TRACE(out);
+                            EXPECT_TRUE(std::isfinite(result.second->data[out]));
+                            EXPECT_NEAR(result.second->data[out], expected[out],
+                                        1e-5 * std::max(1.0, sum_abs[out]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST(MatmulDispatchTest, ThreadedMatmulMatchesNativeAndDoubleReference) {
+    RestoreAutomaticThreadCount restore_threads;
+    struct Shape {
+        int m;
+        int k;
+        int n;
+    };
+    for (const auto& shape : {Shape{5, 17, 13}, Shape{1, 17, 65}, Shape{2, 3, 2}}) {
+        SCOPED_TRACE("dimensions " + std::to_string(shape.m) + ", " +
+                     std::to_string(shape.k) + ", " + std::to_string(shape.n));
+        Tensor a({shape.m, shape.k});
+        Tensor b({shape.k, shape.n});
+        for (std::size_t i = 0; i < a.data.size(); ++i) {
+            a.data[i] = 0.8f * std::sin(static_cast<float>(i) * 0.13f) - 0.2f;
+        }
+        for (std::size_t i = 0; i < b.data.size(); ++i) {
+            b.data[i] = 0.7f * std::cos(static_cast<float>(i) * 0.23f);
+        }
+        const Tensor native = yan_lamma::MatmulDispatch(a, b, MatulMode::Native);
+        for (const int threads : {1, 3}) {
+            SCOPED_TRACE(threads);
+            yan_lamma::SetThreadNum(threads);
+            const Tensor actual =
+                yan_lamma::MatmulDispatch(a, b, MatulMode::Threaded);
+            const Tensor default_result = yan_lamma::Matmul(a, b);
+            ASSERT_EQ(actual.shape, native.shape);
+            ASSERT_EQ(default_result.shape, actual.shape);
+            ASSERT_EQ(actual.data.size(), native.data.size());
+            EXPECT_EQ(actual.data, native.data);
+            EXPECT_EQ(default_result.data, actual.data);
+            for (int row = 0; row < shape.m; ++row) {
+                for (int col = 0; col < shape.n; ++col) {
+                    double expected = 0.0;
+                    for (int k = 0; k < shape.k; ++k) {
+                        expected += static_cast<double>(a.At2(row, k)) * b.At2(k, col);
+                    }
+                    ExpectNearDouble(actual.At2(row, col), expected);
+                }
+            }
+        }
+    }
+}
+
+TEST(MatmulDispatchTest, ThreadedMatmulRejectsOutputTaskCountOverflow) {
+    const Tensor a({46341, 1}, 1.0f);
+    const Tensor b({1, 46341}, 1.0f);
+    for (const bool dispatch : {false, true}) {
+        SCOPED_TRACE(dispatch);
+        try {
+            if (dispatch) {
+                yan_lamma::MatmulDispatch(a, b, MatulMode::Threaded);
+            } else {
+                yan_lamma::Matmul(a, b);
+            }
+            FAIL() << "Expected an output task count overflow error";
+        } catch (const std::overflow_error& error) {
+            EXPECT_NE(std::string(error.what()).find("too many output elements"),
+                      std::string::npos);
+        }
+    }
+}
+
 TEST(MatmulDispatchTest, RejectsEveryUnimplementedMode) {
-    const Tensor x = MakeTensor({2}, {1, 2});
     const Tensor matrix = MakeTensor({2, 2}, {1, 2, 3, 4});
     const std::vector<std::pair<const char*, MatulMode>> modes{
-        {"Threaded", MatulMode::Threaded},
         {"SIMD", MatulMode::SIMD},
         {"ThreadedSIMD", MatulMode::ThreadedSIMD},
     };
     for (const auto& named : modes) {
         SCOPED_TRACE(named.first);
-        EXPECT_THROW(yan_lamma::Linear(x, matrix, named.second), std::runtime_error);
-        EXPECT_THROW(yan_lamma::LinearDispatch(x, matrix, named.second), std::runtime_error);
-        EXPECT_THROW(yan_lamma::Matmul(matrix, matrix, named.second), std::runtime_error);
         EXPECT_THROW(yan_lamma::MatmulDispatch(matrix, matrix, named.second), std::runtime_error);
     }
 }
@@ -307,9 +559,7 @@ TEST(MatmulDispatchTest, RejectsInvalidEnumValues) {
     for (int raw_mode : {-1, 999}) {
         SCOPED_TRACE("mode " + std::to_string(raw_mode));
         const MatulMode mode = static_cast<MatulMode>(raw_mode);
-        EXPECT_THROW(yan_lamma::Linear(x, matrix, mode), std::invalid_argument);
         EXPECT_THROW(yan_lamma::LinearDispatch(x, matrix, mode), std::invalid_argument);
-        EXPECT_THROW(yan_lamma::Matmul(matrix, matrix, mode), std::invalid_argument);
         EXPECT_THROW(yan_lamma::MatmulDispatch(matrix, matrix, mode), std::invalid_argument);
     }
 }
@@ -329,7 +579,7 @@ TEST(NumericalRegressionTest, NativeOperatorsMatchFixedSeedDoubleReferences) {
         Tensor b({k, n});
         for (float& element : a.data) { element = value(random); }
         for (float& element : b.data) { element = value(random); }
-        const Tensor product = yan_lamma::Matmul(a, b);
+        const Tensor product = yan_lamma::MatmulDispatch(a, b, MatulMode::Native);
         ASSERT_EQ(product.shape, std::vector<int>({m, n}));
         ASSERT_EQ(product.data.size(), static_cast<std::size_t>(m * n));
         for (int row = 0; row < m; ++row) {
@@ -352,8 +602,10 @@ TEST(NumericalRegressionTest, NativeOperatorsMatchFixedSeedDoubleReferences) {
             row_input.At2(0, inner) = a.At2(0, inner);
             vector_input.At1(inner) = a.At2(0, inner);
         }
-        const Tensor row_result = yan_lamma::Linear(row_input, weights);
-        const Tensor vector_result = yan_lamma::Linear(vector_input, weights);
+        const Tensor row_result =
+            yan_lamma::LinearDispatch(row_input, weights, MatulMode::Native);
+        const Tensor vector_result =
+            yan_lamma::LinearDispatch(vector_input, weights, MatulMode::Native);
         ASSERT_EQ(row_result.shape, std::vector<int>({1, n}));
         ASSERT_EQ(vector_result.shape, std::vector<int>({n}));
         ASSERT_EQ(row_result.data.size(), static_cast<std::size_t>(n));
