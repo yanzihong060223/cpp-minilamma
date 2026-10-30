@@ -27,10 +27,16 @@ namespace {
         const QuanTensor& weight, const std::vector<uint8_t>& data,
         std::size_t bytes_per_block) {
         if (weight.shape.size() != 2 || weight.shape[0] <= 0 ||
-            weight.shape[1] <= 0 || weight.shape[1] % kQuantBlockSize != 0) {
+            weight.shape[1] <= 0) {
             throw std::runtime_error("Linear: invalid quantized weight shape");
         }
-        const std::size_t block_count = weight.GetNumSize() / kQuantBlockSize;
+        const std::size_t in_features =
+            static_cast<std::size_t>(weight.shape[1]);
+        const std::size_t blocks_per_row =
+            1 + (in_features - 1) / kQuantBlockSize;
+        // 保留元素数量溢出检查，每行尾块独立占用一个完整块。
+        const std::size_t rows = weight.GetNumSize() / in_features;
+        const std::size_t block_count = rows * blocks_per_row;
         if (data.size() % bytes_per_block != 0 ||
             data.size() / bytes_per_block != block_count) {
             throw std::runtime_error("Linear: quantized weight data size mismatch");
