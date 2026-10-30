@@ -7,10 +7,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(YAN_MINILLAMA_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(MINI_LLAMA_CUDA "Enable the CUDA runtime backend" OFF)
 
 find_package(Threads REQUIRED)
 
 add_library(yan_minillama STATIC
+    src/backend.cc
+    src/cuda_runtime.cc
     src/tensor.cc
     src/load.cc
     src/quantiezd_tensor.cc
@@ -37,6 +40,12 @@ add_library(yan_minillama STATIC
 )
 target_include_directories(yan_minillama PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(yan_minillama PUBLIC Threads::Threads)
+
+if(MINI_LLAMA_CUDA)
+    find_package(CUDAToolkit REQUIRED)
+    target_compile_definitions(yan_minillama PRIVATE MINI_LLAMA_USE_CUDA)
+    target_link_libraries(yan_minillama PUBLIC CUDA::cudart)
+endif()
 
 add_executable(mini-llama app/main.cc)
 target_link_libraries(mini-llama PRIVATE yan_minillama)

@@ -401,7 +401,7 @@ Tensor LinearQuant(
         (x.GetNumDims() != 1 && x.GetNumDims() != 2)) {
         throw std::runtime_error("LinearQuant: invalid dimensions");
     }
-
+    
     // shape 是权重形状：[输出特征数，输入特征数]。
     const bool is_1d = x.GetNumDims() == 1;
     const int rows = is_1d ? 1 : x.shape[0];
