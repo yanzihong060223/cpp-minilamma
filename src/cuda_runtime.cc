@@ -121,7 +121,7 @@ void CudaFreeMemory(void* ptr) {
     throw CudaNotBuiltError();
     #endif
 }
-void CudaMemcpy(void* des, void* src, size_t bytes,  CudaMemoryKind kind) {
+void CudaMemcpy(void* des, const void* src, size_t bytes,  CudaMemoryKind kind) {
      #ifdef MINI_LLAMA_USE_CUDA 
      if (bytes == 0) {
         return;
@@ -155,11 +155,10 @@ CudaDeviceBuffer& CudaDeviceBuffer::operator=(CudaDeviceBuffer&& other) noexcept
   return *this;
 }
 void CudaDeviceBuffer::ReSet() {
-  if (data_ == nullptr) {
-    return;
+  if (data_ != nullptr) {
+    SetCudaService(device_id_);
+    CudaFreeMemory(data_);
   }
-  SetCudaService(device_id_);
-  CudaFreeMemory(data_);
   data_ = nullptr;
   byte_size_ = 0;
   device_id_ = 0;
@@ -179,7 +178,7 @@ void CudaDeviceBuffer::Reset(size_t byte_size, int device_id) {
 CudaDeviceBuffer:: CudaDeviceBuffer(size_t byte_size, int device_id) {
    Reset(byte_size, device_id);
 }
-void CudaDeviceBuffer::upload(void* src, size_t byte_size) {
+void CudaDeviceBuffer::upload(const void* src, size_t byte_size) {
   if (byte_size == 0) {
     return;
   }
@@ -193,7 +192,7 @@ void CudaDeviceBuffer::upload(void* src, size_t byte_size) {
   SetCudaService(device_id_);
   CudaMemcpy(data_, src, byte_size, CudaMemoryKind::kHostDevice);
 }
-void CudaDeviceBuffer:: download(void* des, size_t byte_size) {
+void CudaDeviceBuffer:: download(void* des, size_t byte_size) const{
   if (byte_size == 0) {
     return;
   }

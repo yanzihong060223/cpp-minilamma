@@ -28,7 +28,7 @@ void * CudaMemory(size_t byte_size);
 //释放
 void CudaFreeMemory(void* ptr);
 //host device之间的数据拷贝
-void CudaMemcpy(void* des, void* src, size_t bytes,  CudaMemoryKind kind);
+void CudaMemcpy(void* des, const void* src, size_t bytes,  CudaMemoryKind kind);
 class CudaDeviceBuffer {
  public:
     CudaDeviceBuffer() = default;
@@ -41,16 +41,14 @@ class CudaDeviceBuffer {
     CudaDeviceBuffer (CudaDeviceBuffer&& other) noexcept;
     CudaDeviceBuffer& operator= (CudaDeviceBuffer&& other) noexcept;
     // CPU 内存中的数据拷贝到显存
-    void upload(void* src, size_t byte_size);
+    void upload(const void* src, size_t byte_size);
     // 显存到内存
-    void download(void* des, size_t byte_size);
-    bool IsEmpty() {return data_ == nullptr;}
-    int GetDeviceId() {return device_id_;}
-    const int GetDeviceId() const {return device_id_;}
+    void download(void* des, size_t byte_size) const;
+    bool IsEmpty() const {return data_ == nullptr;}
+    int GetDeviceId() const {return device_id_;}
     void* GetData() {return data_;}
     const void* GetData() const{return data_;}
-    size_t GetByteSize() {return byte_size_;}
-    const size_t GetByteSize() const {return byte_size_;}
+    size_t GetByteSize() const {return byte_size_;}
  private:
  void ReleaseDevice() noexcept;
  private:

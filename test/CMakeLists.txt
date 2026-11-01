@@ -1,5 +1,7 @@
 add_executable(yan_minillama_tests
     backend_test.cc
+    cuda_matmul_test.cc
+    cuda_tensor_test.cc
     tensor_test.cc
     quantized_tensor_test.cc
     test_quant.cc

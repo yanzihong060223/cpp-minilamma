@@ -14,6 +14,8 @@ find_package(Threads REQUIRED)
 add_library(yan_minillama STATIC
     src/backend.cc
     src/cuda_runtime.cc
+    src/cuda_tensor.cc
+    src/cuda_matmul.cc
     src/tensor.cc
     src/load.cc
     src/quantiezd_tensor.cc
@@ -44,7 +46,7 @@ target_link_libraries(yan_minillama PUBLIC Threads::Threads)
 if(MINI_LLAMA_CUDA)
     find_package(CUDAToolkit REQUIRED)
     target_compile_definitions(yan_minillama PRIVATE MINI_LLAMA_USE_CUDA)
-    target_link_libraries(yan_minillama PUBLIC CUDA::cudart)
+    target_link_libraries(yan_minillama PUBLIC CUDA::cudart CUDA::cublas)
 endif()
 
 add_executable(mini-llama app/main.cc)
