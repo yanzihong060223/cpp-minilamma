@@ -13,4 +13,5 @@ static Batch FromTokens(std::vector<int>& tokens, int pos);
 
 
 
+
 }// namepace yan_lamma
