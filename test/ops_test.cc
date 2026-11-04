@@ -105,20 +105,18 @@ TEST(LinearTest, QuantizedWeightsUseIndependentRowTailBlocks) {
             weight.type = type;
             weight.shape = {2, width};
             const std::size_t blocks = 2 * (1 + (width - 1) / 32);
-            const std::size_t bytes = type == QuantType::kQ80 ? 34 :
-                                      type == QuantType::kQ40 ? 18 : 20;
-            auto& data = type == QuantType::kQ80 ? weight.kQ80_data :
-                         type == QuantType::kQ40 ? weight.kQ40_data :
-                                                  weight.kQ41_data;
-            data.assign(blocks * bytes, 0);
+            weight.kQ80_data.resize(blocks);
+            weight.kQ40_data.resize(blocks);
+            weight.kQ41_data.resize(blocks);
             for (std::size_t b = 0; b < blocks; ++b) {
                 // FP16 scale = 1; all valid quantized values decode to 1.
-                data[b * bytes + 1] = 0x3c;
-                const std::size_t header = type == QuantType::kQ41 ? 4 : 2;
-                const uint8_t code = type == QuantType::kQ80 ? 1 :
-                                     type == QuantType::kQ40 ? 0x99 : 0x11;
-                std::fill(data.begin() + b * bytes + header,
-                          data.begin() + (b + 1) * bytes, code);
+                weight.kQ80_data[b].d = 0x3c00;
+                weight.kQ40_data[b].d = 0x3c00;
+                weight.kQ41_data[b].d = 0x3c00;
+                weight.kQ41_data[b].m = 0;
+                std::fill(weight.kQ80_data[b].qs, weight.kQ80_data[b].qs + 32, 1);
+                std::fill(weight.kQ40_data[b].qs, weight.kQ40_data[b].qs + 16, 0x99);
+                std::fill(weight.kQ41_data[b].qs, weight.kQ41_data[b].qs + 16, 0x11);
             }
             for (const auto& shape : {std::vector<int>{width},
                                       std::vector<int>{2, width}}) {
@@ -128,16 +126,17 @@ TEST(LinearTest, QuantizedWeightsUseIndependentRowTailBlocks) {
                 for (float value : result.data) {
                     EXPECT_FLOAT_EQ(value, static_cast<float>(width));
                 }
-                const auto valid = data;
-                data.pop_back();
+                const QuanTensor valid = weight;
+                weight.kQ80_data.pop_back();
+                weight.kQ40_data.pop_back();
+                weight.kQ41_data.pop_back();
                 EXPECT_THROW(Linear(input, weight), std::runtime_error);
-                data = valid;
-                data.resize(valid.size() - bytes);
+                weight = valid;
+                weight.kQ80_data.emplace_back();
+                weight.kQ40_data.emplace_back();
+                weight.kQ41_data.emplace_back();
                 EXPECT_THROW(Linear(input, weight), std::runtime_error);
-                data = valid;
-                data.resize(valid.size() + bytes);
-                EXPECT_THROW(Linear(input, weight), std::runtime_error);
-                data = valid;
+                weight = valid;
             }
         }
     }

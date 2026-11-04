@@ -81,14 +81,14 @@ Tensor Q80ToTensor(const QuanTensor& q) {
         throw std::runtime_error("Q80ToTensor: element count not block-aligned");
     }
     const size_t n_blocks = num / kQuantBlockSize;
-    if (q.kQ80_data.size() != n_blocks * kBytesPerQ80Block) {
+    if (q.kQ80_data.size() != n_blocks) {
         throw std::runtime_error("Q80ToTensor: data size mismatch");
     }
     Tensor t(q.shape);
     for (size_t b = 0; b < n_blocks; ++b) {
-        const uint8_t* blk = q.kQ80_data.data() + b * kBytesPerQ80Block;
-        const float    d   = Fp16ToFp32(ReadU16LE(blk));
-        const int8_t*  qs  = reinterpret_cast<const int8_t*>(blk + 2);
+        const Block_Q80& blk = q.kQ80_data[b];
+        const float    d   = Fp16ToFp32(blk.d);
+        const int8_t*  qs  = blk.qs;
         float* out = t.data.data() + b * kQuantBlockSize;
         for (size_t i = 0; i < kQuantBlockSize; ++i) {
             out[i] = d * static_cast<float>(qs[i]);
@@ -109,14 +109,14 @@ Tensor Q40ToTensor(const QuanTensor& q) {
         throw std::runtime_error("Q40ToTensor: element count not block-aligned");
     }
     const size_t n_blocks = num / kQuantBlockSize;
-    if (q.kQ40_data.size() != n_blocks * kBytesPerQ40Block) {
+    if (q.kQ40_data.size() != n_blocks) {
         throw std::runtime_error("Q40ToTensor: data size mismatch");
     }
     Tensor t(q.shape);
     for (size_t b = 0; b < n_blocks; ++b) {
-        const uint8_t* blk = q.kQ40_data.data() + b * kBytesPerQ40Block;
-        const float    d   = Fp16ToFp32(ReadU16LE(blk));
-        const uint8_t* qs  = blk + 2;
+        const Block_Q40& blk = q.kQ40_data[b];
+        const float    d   = Fp16ToFp32(blk.d);
+        const uint8_t* qs  = blk.qs;
         float* out = t.data.data() + b * kQuantBlockSize;
         for (size_t i = 0; i < 16; ++i) {
             const int lo = static_cast<int>(qs[i] & 0x0F) - 8;
@@ -140,15 +140,15 @@ Tensor Q41ToTensor(const QuanTensor& q) {
         throw std::runtime_error("Q41ToTensor: element count not block-aligned");
     }
     const size_t n_blocks = num / kQuantBlockSize;
-    if (q.kQ41_data.size() != n_blocks * kBytesPerQ41Block) {
+    if (q.kQ41_data.size() != n_blocks) {
         throw std::runtime_error("Q41ToTensor: data size mismatch");
     }
     Tensor t(q.shape);
     for (size_t b = 0; b < n_blocks; ++b) {
-        const uint8_t* blk = q.kQ41_data.data() + b * kBytesPerQ41Block;
-        const float    d   = Fp16ToFp32(ReadU16LE(blk));
-        const float    m   = Fp16ToFp32(ReadU16LE(blk + 2));
-        const uint8_t* qs  = blk + 4;
+        const Block_Q41& blk = q.kQ41_data[b];
+        const float    d   = Fp16ToFp32(blk.d);
+        const float    m   = Fp16ToFp32(blk.m);
+        const uint8_t* qs  = blk.qs;
         float* out = t.data.data() + b * kQuantBlockSize;
         for (size_t i = 0; i < 16; ++i) {
             out[i]      = d * static_cast<float>(qs[i] & 0x0F) + m;
