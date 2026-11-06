@@ -17,6 +17,7 @@ add_library(yan_minillama STATIC
     src/cuda_tensor.cc
     src/cuda_matmul.cc
     src/cuda_quant.cc
+    src/cuda_ops.cc
     src/tensor.cc
     src/model.cc
     src/load.cc
@@ -48,7 +49,7 @@ target_link_libraries(yan_minillama PUBLIC Threads::Threads)
 if(MINI_LLAMA_CUDA)
     enable_language(CUDA)
     set_target_properties(yan_minillama PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
-    target_sources(yan_minillama PRIVATE include/cuda_quant.cu)
+    target_sources(yan_minillama PRIVATE include/cuda_quant.cu src/cuda_ops.cu)
     find_package(CUDAToolkit REQUIRED)
     target_compile_definitions(yan_minillama PRIVATE MINI_LLAMA_USE_CUDA)
     target_link_libraries(yan_minillama PUBLIC CUDA::cudart CUDA::cublas)
