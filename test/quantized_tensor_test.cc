@@ -174,20 +174,19 @@ TEST(QuantizedTensorTest, ConversionsRejectElementCountOverflowBeforeAllocating)
 }
 
 // --- Q8_0 / Q4_0 / Q4_1 dequantization ---
-// fp16 位型:0.5 = 0x3800,-1.0 = 0xBC00。小端拆为 {0x00, 0x38} / {0x00, 0xBC}。
+// fp16 位型:0.5 = 0x3800,-1.0 = 0xBC00。
 
 TEST(QuantizedTensorTest, Q80ToTensorDequantizesSingleBlock) {
     QuanTensor q;
     q.type = QuantType::kQ80;
     q.shape = {32};
     // d = 0.5
-    q.kQ80_data.resize(34);
-    q.kQ80_data[0] = 0x00;
-    q.kQ80_data[1] = 0x38;
+    q.kQ80_data.resize(1);
+    q.kQ80_data[0].d = 0x3800;
     // qs[i] = i - 16,范围 [-16, 15]
     for (int i = 0; i < 32; ++i) {
         const int8_t v = static_cast<int8_t>(i - 16);
-        q.kQ80_data[2 + i] = static_cast<uint8_t>(v);
+        q.kQ80_data[0].qs[i] = v;
     }
 
     const Tensor t = Q80ToTensor(q);
@@ -202,7 +201,7 @@ TEST(QuantizedTensorTest, Q80ToTensorRejectsWrongType) {
     QuanTensor q;
     q.type = QuantType::kF32;
     q.shape = {32};
-    q.kQ80_data.resize(34);
+    q.kQ80_data.resize(1);
     EXPECT_THROW(Q80ToTensor(q), std::runtime_error);
 }
 
@@ -210,7 +209,7 @@ TEST(QuantizedTensorTest, Q80ToTensorRejectsSizeMismatch) {
     QuanTensor q;
     q.type = QuantType::kQ80;
     q.shape = {32};
-    q.kQ80_data.resize(33);  // 应为 34
+    q.kQ80_data.resize(0);  // 应为 1 个块
     EXPECT_THROW(Q80ToTensor(q), std::runtime_error);
 }
 
@@ -218,7 +217,7 @@ TEST(QuantizedTensorTest, Q80ToTensorRejectsNonBlockAlignedShape) {
     QuanTensor q;
     q.type = QuantType::kQ80;
     q.shape = {16};  // 16 不是 32 的倍数
-    q.kQ80_data.resize(34);
+    q.kQ80_data.resize(1);
     EXPECT_THROW(Q80ToTensor(q), std::runtime_error);
 }
 
@@ -234,16 +233,15 @@ TEST(QuantizedTensorTest, Q40ToTensorDequantizesSingleBlock) {
     QuanTensor q;
     q.type = QuantType::kQ40;
     q.shape = {32};
-    q.kQ40_data.resize(18);
+    q.kQ40_data.resize(1);
     // d = 0.5
-    q.kQ40_data[0] = 0x00;
-    q.kQ40_data[1] = 0x38;
+    q.kQ40_data[0].d = 0x3800;
     // byte[i] = ((15 - i) << 4) | i → low = i, high = 15 - i
     // y[i]      = 0.5 * (i - 8)
     // y[i + 16] = 0.5 * ((15 - i) - 8) = 0.5 * (7 - i)
     for (int i = 0; i < 16; ++i) {
         const uint8_t byte = static_cast<uint8_t>(((15 - i) << 4) | i);
-        q.kQ40_data[2 + i] = byte;
+        q.kQ40_data[0].qs[i] = byte;
     }
 
     const Tensor t = Q40ToTensor(q);
@@ -258,7 +256,7 @@ TEST(QuantizedTensorTest, Q40ToTensorRejectsWrongType) {
     QuanTensor q;
     q.type = QuantType::kQ80;
     q.shape = {32};
-    q.kQ40_data.resize(18);
+    q.kQ40_data.resize(1);
     EXPECT_THROW(Q40ToTensor(q), std::runtime_error);
 }
 
@@ -266,7 +264,7 @@ TEST(QuantizedTensorTest, Q40ToTensorRejectsSizeMismatch) {
     QuanTensor q;
     q.type = QuantType::kQ40;
     q.shape = {32};
-    q.kQ40_data.resize(17);
+    q.kQ40_data.resize(0);
     EXPECT_THROW(Q40ToTensor(q), std::runtime_error);
 }
 
@@ -282,19 +280,17 @@ TEST(QuantizedTensorTest, Q41ToTensorDequantizesSingleBlock) {
     QuanTensor q;
     q.type = QuantType::kQ41;
     q.shape = {32};
-    q.kQ41_data.resize(20);
+    q.kQ41_data.resize(1);
     // d = 0.5
-    q.kQ41_data[0] = 0x00;
-    q.kQ41_data[1] = 0x38;
+    q.kQ41_data[0].d = 0x3800;
     // m = -1.0
-    q.kQ41_data[2] = 0x00;
-    q.kQ41_data[3] = 0xBC;
+    q.kQ41_data[0].m = 0xBC00;
     // byte[i] = (i << 4) | i → low = i, high = i
     // y[i]      = 0.5 * i - 1
     // y[i + 16] = 0.5 * i - 1
     for (int i = 0; i < 16; ++i) {
         const uint8_t byte = static_cast<uint8_t>((i << 4) | i);
-        q.kQ41_data[4 + i] = byte;
+        q.kQ41_data[0].qs[i] = byte;
     }
 
     const Tensor t = Q41ToTensor(q);
@@ -310,7 +306,7 @@ TEST(QuantizedTensorTest, Q41ToTensorRejectsWrongType) {
     QuanTensor q;
     q.type = QuantType::kQ40;
     q.shape = {32};
-    q.kQ41_data.resize(20);
+    q.kQ41_data.resize(1);
     EXPECT_THROW(Q41ToTensor(q), std::runtime_error);
 }
 
@@ -318,7 +314,7 @@ TEST(QuantizedTensorTest, Q41ToTensorRejectsSizeMismatch) {
     QuanTensor q;
     q.type = QuantType::kQ41;
     q.shape = {32};
-    q.kQ41_data.resize(19);
+    q.kQ41_data.resize(0);
     EXPECT_THROW(Q41ToTensor(q), std::runtime_error);
 }
 

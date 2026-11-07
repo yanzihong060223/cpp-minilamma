@@ -144,7 +144,14 @@ QuanTensor LoadQuantTensor(const std::vector<uint8_t>& raw, const std::vector<in
                     "LoadQuantTensor: Q4_0 raw size mismatch");
             }
             q.type = QuantType::kQ40;
-            q.kQ40_data.assign(raw.begin(), raw.end());
+            q.kQ40_data.resize(num_elents / kQuantBlockSize);
+            for (size_t i = 0; i < q.kQ40_data.size(); ++i) {
+                const uint8_t* bytes = raw.data() + i * kBytesPerQ40Block;
+                auto& block = q.kQ40_data[i];
+                block.d = static_cast<uint16_t>(bytes[0]) |
+                          (static_cast<uint16_t>(bytes[1]) << 8);
+                std::memcpy(block.qs, bytes + 2, sizeof(block.qs));
+            }
             break;
         }
         case static_cast<int>(Ggmltype::GgmltypeQ41) : {
@@ -159,7 +166,16 @@ QuanTensor LoadQuantTensor(const std::vector<uint8_t>& raw, const std::vector<in
                     "LoadQuantTensor: Q4_1 raw size mismatch");
             }
             q.type = QuantType::kQ41;
-            q.kQ41_data.assign(raw.begin(), raw.end());
+            q.kQ41_data.resize(num_elents / kQuantBlockSize);
+            for (size_t i = 0; i < q.kQ41_data.size(); ++i) {
+                const uint8_t* bytes = raw.data() + i * kBytesPerQ41Block;
+                auto& block = q.kQ41_data[i];
+                block.d = static_cast<uint16_t>(bytes[0]) |
+                          (static_cast<uint16_t>(bytes[1]) << 8);
+                block.m = static_cast<uint16_t>(bytes[2]) |
+                          (static_cast<uint16_t>(bytes[3]) << 8);
+                std::memcpy(block.qs, bytes + 4, sizeof(block.qs));
+            }
             break;
         }
         case static_cast<int>(Ggmltype::GgmlytypeQ80) : {
@@ -174,7 +190,14 @@ QuanTensor LoadQuantTensor(const std::vector<uint8_t>& raw, const std::vector<in
                     "LoadQuantTensor: Q8_0 raw size mismatch");
             }
             q.type = QuantType::kQ80;
-            q.kQ80_data.assign(raw.begin(), raw.end());
+            q.kQ80_data.resize(num_elents / kQuantBlockSize);
+            for (size_t i = 0; i < q.kQ80_data.size(); ++i) {
+                const uint8_t* bytes = raw.data() + i * kBytesPerQ80Block;
+                auto& block = q.kQ80_data[i];
+                block.d = static_cast<uint16_t>(bytes[0]) |
+                          (static_cast<uint16_t>(bytes[1]) << 8);
+                std::memcpy(block.qs, bytes + 2, sizeof(block.qs));
+            }
             break;
         }
         default:

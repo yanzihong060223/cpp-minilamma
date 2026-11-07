@@ -24,8 +24,7 @@ namespace {
 
     template<typename BlockType>
     std::vector<BlockType> ReadQuantBlocks(
-        const QuanTensor& weight, const std::vector<uint8_t>& data,
-        std::size_t bytes_per_block) {
+        const QuanTensor& weight, const std::vector<BlockType>& data) {
         if (weight.shape.size() != 2 || weight.shape[0] <= 0 ||
             weight.shape[1] <= 0) {
             throw std::runtime_error("Linear: invalid quantized weight shape");
@@ -37,25 +36,13 @@ namespace {
         // 保留元素数量溢出检查，每行尾块独立占用一个完整块。
         const std::size_t rows = weight.GetNumSize() / in_features;
         const std::size_t block_count = rows * blocks_per_row;
-        if (data.size() % bytes_per_block != 0 ||
-            data.size() / bytes_per_block != block_count) {
+        if (data.size() != block_count) {
             throw std::runtime_error("Linear: quantized weight data size mismatch");
         }
 
         std::vector<BlockType> blocks(block_count);
         for (std::size_t i = 0; i < block_count; ++i) {
-            const uint8_t* bytes = data.data() + i * bytes_per_block;
-            auto& block = blocks[i];
-            // GGUF 的 FP16 字段按小端保存，逐字节读取避免对齐和字节序问题。
-            block.d = static_cast<uint16_t>(bytes[0]) |
-                      (static_cast<uint16_t>(bytes[1]) << 8);
-            if constexpr (std::is_same_v<BlockType, Block_Q41>) {
-                block.m = static_cast<uint16_t>(bytes[2]) |
-                          (static_cast<uint16_t>(bytes[3]) << 8);
-                std::memcpy(block.qs, bytes + 4, sizeof(block.qs));
-            } else {
-                std::memcpy(block.qs, bytes + 2, sizeof(block.qs));
-            }
+            blocks[i] = data[i];
         }
         return blocks;
     }
@@ -172,15 +159,15 @@ Tensor Linear(const Tensor& x, const QuanTensor& weight) {
             return Linear(x, ToTensor(weight));
         case QuantType::kQ80:
             return LinearQ80(x, ReadQuantBlocks<Block_Q80>(
-                                    weight, weight.kQ80_data, kBytesPerQ80Block),
+                                    weight, weight.kQ80_data),
                              weight.shape);
         case QuantType::kQ40:
             return LinearQ40(x, ReadQuantBlocks<Block_Q40>(
-                                    weight, weight.kQ40_data, kBytesPerQ40Block),
+                                    weight, weight.kQ40_data),
                              weight.shape);
         case QuantType::kQ41:
             return LinearQ41(x, ReadQuantBlocks<Block_Q41>(
-                                    weight, weight.kQ41_data, kBytesPerQ41Block),
+                                    weight, weight.kQ41_data),
                              weight.shape);
         default:
             throw std::runtime_error("Linear: unsupported quantization type");

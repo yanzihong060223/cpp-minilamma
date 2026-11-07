@@ -1,7 +1,9 @@
 #pragma once
 #include "include/tensor.h"
 #include "include/quantized_tensor.h"
+#include "include/cuda_runtime.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -43,7 +45,7 @@ struct Layer {
     QuanTensor wv;
     QuanTensor wo;
     Tensor bq; // optional
-    Tensor bk; // optrional
+    Tensor bk; // optional
     Tensor bv; // optional
     Tensor ffn_norm;
     QuanTensor w_gate;
@@ -77,6 +79,31 @@ RopeType rope_type = RopeType:: kNormal;
 
 
 };
+struct CudaloadWeight {
+    std::string name;
+    QuantType type = QuantType::kF32;
+    bool linear = true;
+    std::vector<int> shape;
+    // 量化块总数
+    size_t block_count = 0;
+    CudaDeviceBuffer buffer;
+};
+struct CudaModelWeights {
+  int device_id = 0;
+  size_t uploaded_weight_count = 0;
+  size_t uploaded_bytes = 0;
+  size_t linear_calls = 0;
+  size_t activation_calls = 0;
+  size_t attention_calls = 0;
+  size_t attention_cpu_fallbacks = 0;
+  size_t kv_cache_write_bytes = 0;
+  size_t kv_cache_read_bytes = 0;
+  size_t host_to_device_copies = 0;
+  size_t device_to_host_copies = 0;
+  size_t host_to_device_bytes = 0;
+  size_t device_to_host_bytes = 0;
+  std::vector<CudaloadWeight> weights;
+};
 class Model {
 public:
  Model() = default;
@@ -87,8 +114,25 @@ public:
  Tensor  final_norm ;
  QuanTensor lm_head_;
  std::string load_error_;
+ std::shared_ptr<CudaModelWeights> cuda_weights;
 };
+// 权重上传
+void UploadModelWeightToCuda(Model& model, int device_id);
+// 清理cuda权重
+void ClearCudaWeight(Model& model);
+void ModeloQuanTensorQ80(Model& model);
+void ModeloQuanTensorQ40(Model& model);
+size_t ModelCudaLinearCalls(const Model& model);                // Linear 调用次数
+size_t ModelCudaActivationCalls(const Model& model);            // RMSNorm、加法等小算子调用次数
+size_t ModelCudaAttentionCalls(const Model& model);             // GPU Attention 调用次数
+size_t ModelCudaAttentionCpuFallbacks(const Model& model);      // Attention 回退 CPU 的次数
+void ResetModelCudaRuntimeStats(Model& model);                  // 重置运行统计
+size_t ModelCudaKvCacheWriteBytes(const Model& model);           // KV cache 写入量
+size_t ModelCudaKvCacheReadBytes(const Model& model);            // KV cache 估算读取量
 
-
+size_t ModelCudaHostToDeviceCopies(const Model& model);
+size_t ModelCudaDeviceToHostCopies(const Model& model);
+size_t ModelCudaHostToDeviceBytes(const Model& model);           // CPU → GPU 传输字节数
+size_t ModelCudaDeviceToHostBytes(const Model& model);           // GPU → CPU 传输字节数
 
 }//namespace lamma

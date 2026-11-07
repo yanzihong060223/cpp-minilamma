@@ -40,9 +40,9 @@ QuantType type = QuantType::kF32;
 std::vector<int> shape;
 std::vector<float> kF32_data;
 std::vector<uint8_t> kF16_data;
-std::vector<uint8_t> kQ80_data;
-std::vector<uint8_t> kQ40_data;
-std::vector<uint8_t> kQ41_data;
+std::vector<Block_Q80> kQ80_data;
+std::vector<Block_Q40> kQ40_data;
+std::vector<Block_Q41> kQ41_data;
 size_t GetNumSize() const {
     size_t res = 1;
     for (int dim : shape) {

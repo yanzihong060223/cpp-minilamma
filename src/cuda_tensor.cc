@@ -99,6 +99,11 @@ void CudaTensor::UploadFromHost(const Tensor& src) {
         throw std::runtime_error("CudaTensor::UploadFromHost: cannot upload to an empty tensor");
     }
     CheckHostTensor(src, shape_, "CudaTensor::UploadFromHost");
+    if (src.data.size() != NumEle()) {
+        throw std::runtime_error(
+            "CudaTensor::UploadFromHost: expected " + std::to_string(NumEle()) +
+            " host elements, got " + std::to_string(src.data.size()));
+    }
     cuda_buffer_.upload(src.data.data(), Bytes());
 }
 
@@ -107,6 +112,11 @@ void CudaTensor::DownloadToHost(Tensor& dst) const {
         throw std::runtime_error("CudaTensor::DownloadToHost: cannot download an empty tensor");
     }
     CheckHostTensor(dst, shape_, "CudaTensor::DownloadToHost");
+    if (dst.data.size() != NumEle()) {
+        throw std::runtime_error(
+            "CudaTensor::DownloadToHost: expected " + std::to_string(NumEle()) +
+            " host elements, got " + std::to_string(dst.data.size()));
+    }
     cuda_buffer_.download(dst.data.data(), Bytes());
 }
 
