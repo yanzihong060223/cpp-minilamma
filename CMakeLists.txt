@@ -15,6 +15,7 @@ add_library(yan_minillama STATIC
     src/backend.cc
     src/cuda_runtime.cc
     src/cuda_tensor.cc
+    src/cuda_kvcache.cc
     src/cuda_matmul.cc
     src/cuda_quant.cc
     src/cuda_ops.cc

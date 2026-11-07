@@ -4,6 +4,7 @@ add_executable(yan_minillama_tests
     cuda_ops_test.cc
     cuda_quant_test.cc
     cuda_tensor_test.cc
+    cuda_kvcache_test.cc
     tensor_test.cc
     quantized_tensor_test.cc
     test_quant.cc
