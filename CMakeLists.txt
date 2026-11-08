@@ -15,8 +15,13 @@ add_library(yan_minillama STATIC
     src/backend.cc
     src/cuda_runtime.cc
     src/cuda_tensor.cc
+    src/cuda_kvcache.cc
     src/cuda_matmul.cc
+    src/cuda_quant.cc
+    src/cuda_ops.cc
+    src/cuda_attention.cc
     src/tensor.cc
+    src/model.cc
     src/load.cc
     src/quantiezd_tensor.cc
     src/quant.cc
@@ -44,6 +49,9 @@ target_include_directories(yan_minillama PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(yan_minillama PUBLIC Threads::Threads)
 
 if(MINI_LLAMA_CUDA)
+    enable_language(CUDA)
+    set_target_properties(yan_minillama PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+    target_sources(yan_minillama PRIVATE include/cuda_quant.cu src/cuda_ops.cu src/cuda_attention.cu)
     find_package(CUDAToolkit REQUIRED)
     target_compile_definitions(yan_minillama PRIVATE MINI_LLAMA_USE_CUDA)
     target_link_libraries(yan_minillama PUBLIC CUDA::cudart CUDA::cublas)
@@ -53,7 +61,7 @@ add_executable(mini-llama app/main.cc)
 target_link_libraries(mini-llama PRIVATE yan_minillama)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(yan_minillama PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(yan_minillama PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>)
 elseif(MSVC)
     target_compile_options(yan_minillama PRIVATE /W4)
 endif()

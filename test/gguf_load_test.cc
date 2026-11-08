@@ -340,7 +340,7 @@ TEST_F(GgufModelLoadTest, SharedOutputPreservesQ8Weights) {
     ASSERT_TRUE(model.is_loaded) << model.load_error_;
     EXPECT_EQ(model.lm_head_.type, QuantType::kQ80);
     EXPECT_TRUE(model.lm_head_.kF32_data.empty());
-    EXPECT_EQ(model.lm_head_.kQ80_data.size(), 34u);
+    EXPECT_EQ(model.lm_head_.kQ80_data.size(), 1u);
     EXPECT_EQ(Q80ToTensor(model.lm_head_).data, model.embedding_data_.data);
     EXPECT_FLOAT_EQ(model.embedding_data_.data.front(), 0.5f);
     EXPECT_FLOAT_EQ(model.embedding_data_.data.back(), 16.0f);

@@ -3,6 +3,7 @@
 #include "include/forward.h"
 #include "include/model.h"
 #include "include/ops.h"
+#include "include/quant.h"
 #include "include/quantized_tensor.h"
 #include "matumal/matuml_ops.h"
 #include "thread_pool/thread_pool.h"
@@ -173,6 +174,79 @@ TEST(GoldenForwardTest, MultiTokenBatchMatchesSingleTokenPrefillAndDecode) {
         }
     }
 }
+
+class QuantizedForwardTest : public ::testing::TestWithParam<QuantType> {};
+
+TEST_P(QuantizedForwardTest, PrefillAndDecodeMatchRowDecodedWeights) {
+    RestoreForwardExecution restore;
+    SetDefaultMatulMode(MatulMode::Native);
+    SetThreadNum(1);
+    const auto type = GetParam();
+    SCOPED_TRACE(static_cast<int>(type));
+    Model model = ForwardFixtureModel();
+    if (type == QuantType::kQ80) {
+        ModeloQuanTensorQ80(model);
+    } else {
+        ModeloQuanTensorQ40(model);
+    }
+    // Each of the 32 rows needs three blocks for its 86 input features.
+    const auto& down = model.n_layers_[0].w_down;
+    ASSERT_EQ(down.shape, (std::vector<int>{32, 86}));
+    ASSERT_EQ(type == QuantType::kQ80 ? down.kQ80_data.size()
+                                     : down.kQ40_data.size(), 96u);
+
+    Model reference = model;
+    const auto decode = [](QuanTensor& weight) {
+        const Tensor decoded = weight.type == QuantType::kQ80
+            ? Q80ToTensor(weight.kQ80_data, weight.shape)
+            : Q40ToTensor(weight.kQ40_data, weight.shape);
+        weight = ToQuanTensor(decoded);
+    };
+    decode(reference.lm_head_);
+    for (auto& layer : reference.n_layers_) {
+        for (auto* weight : {&layer.wq, &layer.wk, &layer.wv, &layer.wo,
+                             &layer.w_gate, &layer.w_up, &layer.w_down}) {
+            decode(*weight);
+        }
+    }
+
+    Context batched(&model);
+    Context singles(&model);
+    Context expected(&reference);
+    std::vector<int> prompt{128, 'h', 'i'};
+    Tensor actual = ForwardBatch(model, batched, Batch::FromTokens(prompt, 0));
+    Tensor single;
+    for (std::size_t pos = 0; pos < prompt.size(); ++pos) {
+        singles.pos = pos;
+        single = ForwardToken(model, singles, prompt[pos]);
+    }
+    Tensor golden = ForwardBatch(reference, expected, Batch::FromTokens(prompt, 0));
+    const auto compare = [&] {
+        ExpectSameLogits(actual, single);
+        ExpectSameCache(batched, singles);
+        ASSERT_EQ(actual.shape, golden.shape);
+        ASSERT_EQ(actual.data.size(), golden.data.size());
+        for (std::size_t i = 0; i < actual.data.size(); ++i) {
+            EXPECT_TRUE(std::isfinite(golden.data[i]));
+            EXPECT_NEAR(actual.data[i], golden.data[i], 1e-5f);
+        }
+    };
+    compare();
+    for (int step = 0; step < 3; ++step) {
+        SCOPED_TRACE(step);
+        const int next = static_cast<int>(ArgMax(actual));
+        const int pos = static_cast<int>(prompt.size()) + step;
+        actual = ForwardBatch(model, batched, Batch::Single(next, pos));
+        singles.pos = pos;
+        single = ForwardToken(model, singles, next);
+        golden = ForwardBatch(reference, expected, Batch::Single(next, pos));
+        compare();
+    }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    RowQuantization, QuantizedForwardTest,
+    ::testing::Values(QuantType::kQ80, QuantType::kQ40));
 
 }  // namespace
 }  // namespace yan_lamma
