@@ -347,6 +347,7 @@ void UploadModelWeightToCuda(Model& model, int device_id) {
 void ClearCudaWeight(Model& model) {
     model.cuda_weights.reset();
 }
+
 size_t ModelCudaLinearCalls(const Model& model) {
     if (!model.is_loaded) {
         throw std::runtime_error("ModelCudaLinearCalls: model is not loaded");

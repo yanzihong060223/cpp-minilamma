@@ -65,6 +65,20 @@ Tensor CudaElementwiseMul(const Tensor& a, const Tensor& b, int device_id) {
     throw CudaOpsNotBuiltError();
 }
 
+CudaTensor CudaSiluDevice(const CudaTensor& a, int device_id) {
+    (void)a;
+    (void)device_id;
+    throw CudaOpsNotBuiltError();
+}
+
+CudaTensor CudaElementwiseMulDevice(const CudaTensor& a, const CudaTensor& b,
+                                   int device_id) {
+    (void)a;
+    (void)b;
+    (void)device_id;
+    throw CudaOpsNotBuiltError();
+}
+
 CudaTensor CudaElementAddDevice(const CudaTensor& a, const CudaTensor& b,
                                int device_id) {
     (void)a;

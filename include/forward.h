@@ -1,3 +1,4 @@
+#pragma once
 #include "include/context.h"
 #include "include/kvcache.h"
 #include "include/model.h"
@@ -5,6 +6,7 @@
 #include "include/tensor.h"
 #include "include/batch.h"
 namespace yan_lamma {
+
 // - 查嵌入表 Embedding 映射
 // - layer 层级运算
 // - Rope 注入信息

@@ -2,6 +2,8 @@
 #include "include/tensor.h"
 #include "tensor.h"
 #include "include/kvcache.h"
+#include "include/cuda_kvcache.h"
+
 #include <vector>
 #include <string>
 namespace yan_lamma {
@@ -24,7 +26,7 @@ std::vector<int> token_id_;
 // cpu kvcache
 KvCache cpu_cache_;
 //GPU KvCache
-//CudaKvCache cuda_cache_;
+CudaCache cuda_cache_;
 int n_decode_size = 0; //decode计数
 int n_profill_size = 0; //预填充计数
 size_t pos =0; //当前token位置

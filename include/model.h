@@ -122,6 +122,7 @@ void UploadModelWeightToCuda(Model& model, int device_id);
 void ClearCudaWeight(Model& model);
 void ModeloQuanTensorQ80(Model& model);
 void ModeloQuanTensorQ40(Model& model);
+
 size_t ModelCudaLinearCalls(const Model& model);                // Linear 调用次数
 size_t ModelCudaActivationCalls(const Model& model);            // RMSNorm、加法等小算子调用次数
 size_t ModelCudaAttentionCalls(const Model& model);             // GPU Attention 调用次数
