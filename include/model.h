@@ -93,6 +93,7 @@ struct CudaModelWeights {
   size_t uploaded_weight_count = 0;
   size_t uploaded_bytes = 0;
   size_t linear_calls = 0;
+  size_t linear_cpu_fallbacks = 0;
   size_t activation_calls = 0;
   size_t attention_calls = 0;
   size_t attention_cpu_fallbacks = 0;
@@ -123,6 +124,7 @@ void ClearCudaWeight(Model& model);
 void ModeloQuanTensorQ80(Model& model);
 void ModeloQuanTensorQ40(Model& model);
 
+size_t ModelCudaLinearCpuFallbacks(const Model& model);
 size_t ModelCudaLinearCalls(const Model& model);                // Linear 调用次数
 size_t ModelCudaActivationCalls(const Model& model);            // RMSNorm、加法等小算子调用次数
 size_t ModelCudaAttentionCalls(const Model& model);             // GPU Attention 调用次数

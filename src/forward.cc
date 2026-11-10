@@ -1,4 +1,6 @@
 #include "include/forward.h"
+#include "src/internal/forward.h"
+#include "src/internal/cuda_stats.h"
 #include "include/cuda_kvcache.h"
 #include "include/cuda_tensor.h"
 #include "include/tensor.h"
@@ -14,7 +16,6 @@
 #include <utility>
 #include <cmath>
 namespace yan_lamma {
-namespace {
 
 // forward 运行统计：仅累加 CPU 侧计数器，无 CUDA 状态时直接返回。
 // 操作成功返回后记录；异步操作仅表示成功提交。
@@ -49,22 +50,6 @@ static void RecordCudaAttentionCpuFallback(const Model& model) {
     model.cuda_weights->attention_cpu_fallbacks += 1;
 }
 
-static void RecordCudaHostToDeviceCopy(const Model& model, size_t bytes) {
-    if (!model.cuda_weights) {
-        return;
-    }
-    model.cuda_weights->host_to_device_copies += 1;
-    model.cuda_weights->host_to_device_bytes += bytes;
-}
-
-static void RecordCudaDeviceToHostCopy(const Model& model, size_t bytes) {
-    if (!model.cuda_weights) {
-        return;
-    }
-    model.cuda_weights->device_to_host_copies += 1;
-    model.cuda_weights->device_to_host_bytes += bytes;
-}
-
 static void RecordCudaKvCacheWrite(const Model& model, size_t bytes) {
     if (!model.cuda_weights) {
         return;
@@ -82,19 +67,6 @@ static void RecordCudaKvCacheRead(const Model& model, size_t bytes) {
     // 2 * (pos + 1) * n_heads * head_dim * sizeof(float)，GQA 共享 head 重复计入。
     model.cuda_weights->kv_cache_read_bytes += bytes;
 }
-
-// 仅用于一次输入上传、一次 Linear、一次输出下载，不再分别记录这三项。
-// 不计权重上传或 CPU bias add。
-static void RecordCudaLinearCopy(const Model& model, const Tensor& x,
-                          const Tensor& y) {
-    if (!model.cuda_weights) {
-        return;
-    }
-    RecordCudaLinearCall(model);
-    RecordCudaHostToDeviceCopy(model, x.GetDataSize() * sizeof(float));
-    RecordCudaDeviceToHostCopy(model, y.GetDataSize() * sizeof(float));
-}
-
 
 CudaloadWeight* FindLoadWeight(const Model& model, const std::string& name, QuantType type) {
         auto arr = model.cuda_weights;
@@ -128,13 +100,14 @@ CudaTensor ForwardLinearDevice(const Model& model, const CudaTensor& x, const st
     if (!model.cuda_weights) {
         throw std::runtime_error("ForwardLinearDevice: CUDA weights are not loaded: " + name);
     }
-    if (! ForwaredLinearSupport(tensor)) {
-        throw std::runtime_error("CUDA forward Linear unsupported weight type: " +
-                             name);
-    }
+    internal::CudaStatsScope scope(model.cuda_weights.get());
     CudaloadWeight* weight = FindLoadWeight(model, name, tensor.type);
-    if (weight == nullptr) {
-        throw std::runtime_error("ForwardLinearDevice: CUDA weight not found: " + name);
+    if (!ForwaredLinearSupport(tensor) || weight == nullptr) {
+        Tensor host_x = x.Download();
+        Tensor host_y = Linear(host_x, tensor);
+        CudaTensor result = TensorHostToDevice(host_y, model.cuda_weights->device_id);
+        ++model.cuda_weights->linear_cpu_fallbacks;
+        return result;
     }
     CudaTensor y;
     switch(tensor.type) {
@@ -454,10 +427,8 @@ Tensor ComputeLogitsDevice(const Model& model, CudaTensor& x) {
     CudaTensor logits = ForwardLinearDevice(model, normed, "lm_head", model.lm_head_);
     Tensor logits_host(logits.shape());
     logits.DownloadToHost(logits_host);
-    RecordCudaDeviceToHostCopy(model, logits.Bytes());
     return logits_host.Reshape({model.config.vocab_size}, "logits tensor");
 }
-} // namespace
 Tensor ForwardToken(const Model& model, Context& context, int token) {
     auto config = model.config;
     if (!model.is_loaded) {
@@ -483,6 +454,7 @@ Tensor ForwardToken(const Model& model, Context& context, int token) {
             context.cuda_cache_.Reset(config.layers, config.max_seq_len, config.n_kv_heads,
                                       config.head_dim, model.cuda_weights->device_id);
         }
+        internal::CudaStatsScope scope(model.cuda_weights.get());
         CudaTensor emb_dev = EmbeddingDevice(model, token);
         for (int  i = 0; i < layers; i++) {
             emb_dev = ForwardLayerDevice(model, emb_dev, context, i, model.n_layers_[i]);

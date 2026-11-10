@@ -1,3 +1,4 @@
+#include "app/backend_cli.h"
 #include "include/betch_mark.h"
 #include "include/forward.h"
 #include "include/load.h"
@@ -21,6 +22,7 @@
 #include <system_error>
 
 int main(int argc, char** argv) {
+    if (UsesBackendCli(argc, argv)) return RunBackendCli(argc, argv);
     using namespace yan_lamma;
     namespace fs = std::filesystem;
 

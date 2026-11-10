@@ -2,7 +2,9 @@
 #include "include/cuda_runtime.h"
 
 #include <string>
+#include <iosfwd>
 namespace yan_lamma {
+class Model;
 enum class BackendKind {
     Kcpu = 0,
     Kgpu
@@ -25,4 +27,5 @@ bool CudaBackendAvailable(int device_id);
 // 用于展示：成功返回设备摘要，查询失败返回异常消息。
 std::string CudaDeviceSummary(int device_id);
 std::string BackendActivePath(const BackendConfig& config);
+void PrintBackendSummary(const BackendConfig& config, const Model& model, std::ostream& out);
 }
