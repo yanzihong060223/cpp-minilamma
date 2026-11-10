@@ -8,8 +8,8 @@ import sys
 import tempfile
 import unittest
 
-RUNNER = str(Path(sys.argv.pop(1)).resolve())
-GENERATE = str(Path(sys.argv.pop(1)).resolve())
+RUNNER = None
+GENERATE = None
 TEMPLATE = ("{% for message in messages %}"
             "{{ message.role + ':' + message.content + ';' }}"
             "{% endfor %}{{ 'assistant:' }}")
@@ -210,4 +210,6 @@ class InteractiveTest(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    RUNNER = str(Path(sys.argv.pop(1)).resolve())
+    GENERATE = str(Path(sys.argv.pop(1)).resolve())
     unittest.main()

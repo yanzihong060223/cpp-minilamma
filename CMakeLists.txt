@@ -60,6 +60,12 @@ endif()
 add_executable(mini-llama app/main.cc app/backend_cli.cc)
 target_link_libraries(mini-llama PRIVATE yan_minillama)
 
+# The interactive runner is usable without enabling the legacy test suite.
+add_executable(gguf_run test/gguf_run.cc)
+target_link_libraries(gguf_run PRIVATE yan_minillama)
+set_target_properties(gguf_run PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/test")
+
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(yan_minillama PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic>)
 elseif(MSVC)

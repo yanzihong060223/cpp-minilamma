@@ -15,9 +15,45 @@ def require(condition, message):
         raise AssertionError(message)
 
 
-def run(*args):
-    return subprocess.run([str(BINARY), *map(str, args)], cwd=ROOT,
-                          capture_output=True, text=True, timeout=300)
+def run(*args, binary=BINARY, input_text=None):
+    return subprocess.run([str(binary), *map(str, args)], cwd=ROOT,
+                          input=input_text, capture_output=True, text=True, timeout=300)
+
+
+def interactive(available):
+    runner = BINARY.parent / "test/gguf_run"
+    require(runner.is_file(), f"Missing interactive executable: {runner}")
+    result = run(MODEL, "1", "--backend", "cuda", binary=runner,
+                 input_text="hello\n/stats\nhi\n/stats\n/clear\n/stats\n/exit\n")
+    text = result.stdout + result.stderr
+    if not available:
+        require(result.returncode != 0 and "Backend setup failed:" in text, text)
+        require("CUDA backend was not built" in text or "CUDA device" in text, text)
+        print("PASS interactive CUDA unavailable contract")
+        return
+    require(result.returncode == 0 and "FAIL" not in text, text)
+    require(result.stderr.count("Loading model:") == 1, text)
+    require(result.stderr.count("Turn complete:") == 2, text)
+    require(result.stdout.count("backend: cuda\n") == 4, text)
+    messages = re.findall(r"messages\s*:\s*(\d+)", result.stdout)
+    require(messages == ["2", "4", "0"], text)
+
+    def values(name):
+        return [int(n) for n in re.findall(
+            r"^" + re.escape(name) + r":\s*(\d+)\s*$", result.stdout, re.M)]
+
+    uploaded = values("uploaded weights")
+    require(len(uploaded) == 4 and uploaded[0] > 0 and len(set(uploaded)) == 1, text)
+    for name in ("cuda linear calls", "cuda activation calls", "cuda attention calls",
+                 "device->host copies", "device->host bytes"):
+        counts = values(name)
+        require(len(counts) == 4 and counts[0] == counts[3] == 0 and
+                counts[1] > 0 and counts[2] > 0, text)
+    for name in ("cpu attention fallback calls", "cpu linear fallback calls",
+                 "host->device copies", "host->device bytes"):
+        require(values(name) == [0]*4, text)
+    print(result.stdout, end="")
+    print("PASS interactive CUDA history/clear/stats")
 
 
 def main():
@@ -65,6 +101,7 @@ def main():
         require(re.search(r"trace summary: trace_id=\S+ status=ok", text), text)
         print(result.stdout, end="")
         print(f"PASS {command} CUDA execution")
+    interactive(available)
     print("PASS cuda-chat-smoke")
 
 

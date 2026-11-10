@@ -154,6 +154,8 @@ def main():
         unavailable(result)
     print("PASS CUDA backend" + (" execution" if available else " unavailable contract"))
     test_modes(available, built)
+    from test_chat_backend_cli import test_chat_backend
+    test_chat_backend(BINARY, available)
     print("PASS backend-cli-smoke")
 
 

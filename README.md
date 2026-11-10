@@ -297,9 +297,30 @@ cmake --build build-smoke-release --target gguf_run --parallel 2
 生成在 EOS 或本轮上限处停止，成功轮次才写入历史；失败或上下文超限时保留此前历史。
 超限后可缩短输入或执行 `/clear`。每轮独立分配 KV，不复用历史缓存，不自动裁剪消息。
 `/stats` 的 prompt token 数累计每轮完整 prefill 的工作量，生成 token 数不包括 EOS。
+`gguf_run` 默认使用 CPU，也可以在同一会话入口选择 CUDA：
+
+```bash
+cmake -S . -B build-cuda -DMINI_LLAMA_CUDA=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cuda --target gguf_run -j4
+./build-cuda/test/gguf_run tools/model/chat/Qwen2-0.5B-Instruct-Q8_0.gguf 128 --backend cuda --device 0
+```
+
+模型路径按本机文件位置替换。`--device` 只能和 `--backend cuda` 一起使用；
+不传 backend 时，原有 CPU 调用和默认采样参数保持有效。
+该目标不依赖 `MINI_LLAMA_LEGACY_TESTS`，关闭 `BUILD_TESTING` 时也可构建。
+CUDA 会话在启动时上传一次权重，每轮仍完整 prefill 历史并独立分配 GPU KV cache。
+启动时显示 backend 摘要，`/stats` 显示最近一轮的 CUDA 调用及传输计数；
+这些计数在每轮 KV 初始化后重置，不包括权重上传和 KV 初始化。
+`/clear` 清零运行计数但保留上传权重，不在每轮回复后自动打印完整摘要。
+正常 GPU 路径应看到 `cpu attention fallback calls: 0` 和 `host->device copies: 0`。
+默认 `backend-cli-smoke` 包含不依赖真实模型的多轮 CPU/CUDA 会话回归，
+`cuda-chat-smoke` 额外验证真实 Qwen 的两轮对话与清空；可用
+`MINI_LLAMA_CHAT_MODEL` 指定 GGUF 路径，文件缺失时明确输出 SKIP。
+
 完整聊天路径的测试使用小型 GGUF fixture，不依赖下载模型：
 
 ```bash
+cmake -S . -B build-smoke-release -DMINI_LLAMA_LEGACY_TESTS=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-smoke-release --target gguf_run gguf_generate --parallel 2
 ctest --test-dir build-smoke-release -R GgufInteractive --output-on-failure
 ```
