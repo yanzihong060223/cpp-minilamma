@@ -167,6 +167,7 @@ int RunBackendCli(int argc, char** argv) {
                 Sampler sampler(params);
                 for (int i = 0; i < count; ++i) {
                     const int token = sampler.SamplerO(logits, params);
+                    if (token == tokenizer->GetEOSId()) break;
                     std::cout << tokenizer->DecodeToken(token);
                     if (i + 1 < count) logits = ForwardBatch(model, context,
                         Batch::Single(token, static_cast<int>(tokens.size()) + i));

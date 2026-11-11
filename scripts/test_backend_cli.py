@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = Path(os.environ.get("MINI_LLAMA_BIN", ROOT / "build/mini-llama")).resolve()
@@ -83,6 +84,59 @@ def test_modes(cuda_available, cuda_built):
         print(f"PASS modes {part}")
 
 
+def test_generate_stopping(cuda_available):
+    from test_chat_backend_cli import FIXTURE
+
+    with tempfile.TemporaryDirectory(prefix="yan-generate-eos-") as temp:
+        model = Path(temp) / "tiny.gguf"
+        for backend in (["cpu", "cuda"] if cuda_available else ["cpu"]):
+            # Test termination behavior with deterministic GGUF fixtures. These
+            # output assertions do not replace CPU/CUDA logits comparisons.
+            for eos, count, expected, nan_logits in (
+                (True, 4, "", False),
+                (False, 4, "xxxx", False),
+                (False, 1, "x", False),
+                # NaN logits would make SamplerO fail if count=0 sampled at all.
+                (True, 0, "", True),
+            ):
+                FIXTURE.model_file(model, q8=True, eos=eos, nan_logits=nan_logits)
+                result = run("generate", model, "--backend", backend,
+                             "-p", "hello", "-n", count, "--seed", 1)
+                success(result)
+                trace(result, "ok")
+                summary(result, backend)
+                generated = result.stdout.split(f"backend: {backend}\n", 1)[0]
+                require(generated == "GGUF model loaded successfully\n" + expected + "\n",
+                        output(result))
+                require("<eos>" not in result.stdout, output(result))
+                if backend == "cuda":
+                    # Fixture has one layer and eight linears/activations per
+                    # forward. Immediate EOS permits only the five prompt steps.
+                    steps = len("hello") + (0 if eos or count == 0 else count - 1)
+                    for name, expected_count in (
+                        ("cuda linear calls", 8 * steps),
+                        ("cuda activation calls", 8 * steps),
+                        ("cuda attention calls", steps),
+                        ("device->host copies", steps),
+                        ("device->host bytes", 257 * 4 * steps),
+                        ("host->device copies", 0),
+                        ("host->device bytes", 0),
+                        ("cpu linear fallback calls", 0),
+                        ("cpu attention fallback calls", 0),
+                    ):
+                        require(field(result.stdout, name) == expected_count,
+                                f"{name} expected {expected_count}:\n{output(result)}")
+                print(f"PASS generate {backend} eos={eos} limit={count}")
+
+            # Bench intentionally retains a fixed workload, even for EOS.
+            FIXTURE.model_file(model, q8=True, eos=True)
+            result = run("bench", model, "--backend", backend, "-p", "hello", "-n", 4)
+            success(result)
+            trace(result, "ok")
+            require(field(result.stdout, "n_generate_tokens") == 4, output(result))
+            print(f"PASS bench {backend} fixed workload with EOS")
+
+
 def main():
     result = run("generate", TINY, "--backend", "cpu", "-p", "hello", "-n", 1, "--seed", 1)
     success(result)
@@ -153,6 +207,7 @@ def main():
     else:
         unavailable(result)
     print("PASS CUDA backend" + (" execution" if available else " unavailable contract"))
+    test_generate_stopping(available)
     test_modes(available, built)
     from test_chat_backend_cli import test_chat_backend
     test_chat_backend(BINARY, available)
