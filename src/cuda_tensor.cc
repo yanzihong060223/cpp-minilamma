@@ -94,6 +94,14 @@ void CudaTensor::Reset(const std::vector<int>& shape, int device_id) {
     numel_ = numel;
 }
 
+void CudaTensor::Reshape(const std::vector<int>& shape) {
+    const size_t numel = CheckNumel(shape, "CudaTensor::Reshape");
+    if (IsEmpty() || numel != numel_) {
+        throw std::runtime_error("CudaTensor::Reshape: element count must remain unchanged on a non-empty tensor");
+    }
+    shape_ = shape;
+}
+
 void CudaTensor::UploadFromHost(const Tensor& src) {
     if (IsEmpty()) {
         throw std::runtime_error("CudaTensor::UploadFromHost: cannot upload to an empty tensor");

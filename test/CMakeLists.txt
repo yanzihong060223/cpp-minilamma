@@ -40,8 +40,6 @@ target_link_libraries(gguf_generate PRIVATE yan_minillama)
 add_executable(betch_mark_test betch_mark_test.cc)
 target_link_libraries(betch_mark_test PRIVATE yan_minillama)
 
-add_executable(gguf_run gguf_run.cc)
-target_link_libraries(gguf_run PRIVATE yan_minillama)
 add_test(NAME mini-llama-tests.GgufInteractive
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/gguf_run_test.py"
             "$<TARGET_FILE:gguf_run>" "$<TARGET_FILE:gguf_generate>")

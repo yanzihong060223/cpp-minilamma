@@ -20,6 +20,8 @@ class CudaTensor {
     void Reset();
     // 显式形状必须非空，且每一维都为正数。
     void Reset(const std::vector<int>& shape, int device_id);
+    // 仅修改形状，元素总数必须保持不变，不分配或复制显存。
+    void Reshape(const std::vector<int>& shape);
     void UploadFromHost(const Tensor& src);
     void DownloadToHost(Tensor& dst) const;
     Tensor Download() const;

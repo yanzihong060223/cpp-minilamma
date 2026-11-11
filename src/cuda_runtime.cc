@@ -1,4 +1,5 @@
 #include "include/cuda_runtime.h"
+#include "src/internal/cuda_stats.h"
 
 #include <cstddef>
 #include <sstream>
@@ -8,6 +9,7 @@
 #include <cuda_runtime_api.h>
 #endif
 namespace yan_lamma {
+thread_local CudaModelWeights* internal::active_cuda_stats = nullptr;
 namespace {
 #ifndef MINI_LLAMA_USE_CUDA
 std::runtime_error CudaNotBuiltError() {
@@ -131,6 +133,15 @@ void CudaMemcpy(void* des, const void* src, size_t bytes,  CudaMemoryKind kind) 
         "cudaMemcpy requires non-null src and dst for non-empty copies");
      }
       CheckCuda(cudaMemcpy(des, src, bytes, ToCudaMemcpyKind(kind)), "cudaMemcpy");
+      if (auto* stats = internal::active_cuda_stats) {
+          if (kind == CudaMemoryKind::kHostDevice) {
+              ++stats->host_to_device_copies;
+              stats->host_to_device_bytes += bytes;
+          } else if (kind == CudaMemoryKind::kDeviceHost) {
+              ++stats->device_to_host_copies;
+              stats->device_to_host_bytes += bytes;
+          }
+      }
     #else
     (void) des;
     (void) src;

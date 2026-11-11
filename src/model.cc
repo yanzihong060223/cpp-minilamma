@@ -5,6 +5,7 @@
 #include "include/tensor.h"
 #include <cstddef>
 #include <limits>
+#include <iostream>
 
 #include <stdexcept>
 #include <utility>
@@ -104,34 +105,6 @@ void UploadLinearF32(CudaModelWeights& arry, int device_id, const std::string& n
     weight.buffer = std::move(buffer);
     arry.weights.push_back(std::move(weight));
     arry.device_id  = device_id;
-    arry.uploaded_weight_count++;
-    arry.uploaded_bytes += byte_size;
-}
-void UploadLinearF16(CudaModelWeights& arry, int device_id, const std::string& name, const QuanTensor& tensor) {
-    if (tensor.type != QuantType::kF16) {
-        return;
-    }
-    if (tensor.kF16_data.empty()) {
-        throw std::runtime_error("CUDA weight upload: empty F16 data for " + name);
-    }
-    size_t byte_size = tensor.GetNumSize() * 2;
-    if (byte_size != tensor.kF16_data.size()) {
-        throw std::runtime_error("CUDA weight upload: F16 data size mismatch for " +
-                                 name + ", expected " + std::to_string(byte_size) +
-                                 " bytes, got " + std::to_string(tensor.kF16_data.size()));
-    }
-    CudaloadWeight weight;
-    weight.linear = true;
-    weight.block_count = 0;
-    weight.name = name;
-    weight.shape = tensor.shape;
-    weight.type = tensor.type;
-    CudaDeviceBuffer buffer;
-    buffer.Reset(byte_size, device_id);
-    buffer.upload(tensor.kF16_data.data(), byte_size);
-    weight.buffer = std::move(buffer);
-    arry.weights.push_back(std::move(weight));
-    arry.device_id = device_id;
     arry.uploaded_weight_count++;
     arry.uploaded_bytes += byte_size;
 }
@@ -304,7 +277,11 @@ void UploadLinearQ41(CudaModelWeights& arry, int device_id, const std::string na
 }
 static void UploadLinear(CudaModelWeights& arry, int device_id, const std::string name,  const QuanTensor& tensor) {
     UploadLinearF32(arry, device_id, name, tensor);
-    UploadLinearF16(arry, device_id, name, tensor);
+    if (tensor.type != QuantType::kF32 && tensor.type != QuantType::kQ80 &&
+        tensor.type != QuantType::kQ40 && tensor.type != QuantType::kQ41) {
+        std::cerr << "cuda fallback: unsupported or missing quantized linear weights use CPU path\n";
+        return;
+    }
     UploadLinearQ40(arry, device_id, name, tensor);
     UploadLinearQ41(arry, device_id, name, tensor);
     UploadLinearQ80(arry, device_id, name, tensor);
@@ -347,6 +324,11 @@ void UploadModelWeightToCuda(Model& model, int device_id) {
 void ClearCudaWeight(Model& model) {
     model.cuda_weights.reset();
 }
+
+size_t ModelCudaLinearCpuFallbacks(const Model& model) {
+    if (!model.is_loaded) throw std::runtime_error("ModelCudaLinearCpuFallbacks: model is not loaded");
+    return model.cuda_weights ? model.cuda_weights->linear_cpu_fallbacks : 0;
+}
 size_t ModelCudaLinearCalls(const Model& model) {
     if (!model.is_loaded) {
         throw std::runtime_error("ModelCudaLinearCalls: model is not loaded");
@@ -380,6 +362,7 @@ void ResetModelCudaRuntimeStats(Model& model) {
     }
     CudaModelWeights& weights = *model.cuda_weights;
     weights.linear_calls = 0;
+    weights.linear_cpu_fallbacks = 0;
     weights.activation_calls = 0;
     weights.attention_calls = 0;
     weights.attention_cpu_fallbacks = 0;

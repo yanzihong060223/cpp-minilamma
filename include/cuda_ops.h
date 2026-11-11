@@ -17,8 +17,10 @@ namespace  yan_lamma {
     // SwigLU
     //激活gate
     Tensor CudaSilu(const Tensor& a, int device_id = 0);
+    CudaTensor CudaSiluDevice(const CudaTensor& a, int device_id = 0);
     // 处理特征
     Tensor CudaElementwiseMul(const Tensor& a, const Tensor& b, int device_id = 0);
+    CudaTensor CudaElementwiseMulDevice(const CudaTensor& a, const CudaTensor& b, int device_id = 0);
     // 处理残差
     CudaTensor CudaElementAddDevice(const CudaTensor& a, const CudaTensor& b, int device_id = 0);
     // 处理bias

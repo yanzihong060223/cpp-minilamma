@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <limits>
 namespace yan_lamma {
 namespace {
 constexpr int kBlockSize = 256;
@@ -19,6 +20,19 @@ void CheckKernel(const char* caller) {
     CheckOps(cudaGetLastError(), caller);
 }
 //校验函数
+void ValidateElementwiseDeviceInput(const CudaTensor& x, int device_id,
+                                    const char* caller) {
+    if (x.IsEmpty() || x.NumEle() == 0) {
+        throw std::runtime_error(std::string(caller) + ": input tensor must not be empty");
+    }
+    if (x.DeviceId() != device_id) {
+        throw std::runtime_error(std::string(caller) + ": input tensor is on a different CUDA device");
+    }
+    if (x.NumEle() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        throw std::runtime_error(std::string(caller) + ": element count exceeds kernel index range");
+    }
+}
+
 void RequireSameShape(const Tensor& a, const Tensor& b, const char* caller) {
     if (a.shape != b.shape) {
         throw std::runtime_error(std::string(caller) + ": input shapes must match");
@@ -387,6 +401,34 @@ Tensor CudaElementwiseMul(const Tensor& a, const Tensor& b, int device_id) {
     return y;
 }
 
+CudaTensor CudaSiluDevice(const CudaTensor& a, int device_id) {
+    ValidateElementwiseDeviceInput(a, device_id, "CudaSiluDevice");
+    SetCudaService(device_id);
+    CudaTensor y(a.shape(), device_id);
+    int n = static_cast<int>(a.NumEle());
+    SiluKernel<<<GridFor(n), kBlockSize>>>(
+        static_cast<const float*>(a.GetData()),
+        static_cast<float*>(y.GetData()), n);
+    CheckKernel("SiluKernel");
+    return y;
+}
+
+CudaTensor CudaElementwiseMulDevice(const CudaTensor& a, const CudaTensor& b,
+                                   int device_id) {
+    ValidateElementwiseDeviceInput(a, device_id, "CudaElementwiseMulDevice");
+    ValidateElementwiseDeviceInput(b, device_id, "CudaElementwiseMulDevice");
+    RequireSameShape(a, b, "CudaElementwiseMulDevice");
+    SetCudaService(device_id);
+    CudaTensor y(a.shape(), device_id);
+    int n = static_cast<int>(a.NumEle());
+    ElementWiseMulKernel<<<GridFor(n), kBlockSize>>>(
+        static_cast<const float*>(a.GetData()),
+        static_cast<const float*>(b.GetData()),
+        static_cast<float*>(y.GetData()), n);
+    CheckKernel("ElementWiseMulKernel");
+    return y;
+}
+
 CudaTensor CudaElementAddDevice(const CudaTensor& a, const CudaTensor& b, int device_id) {
     RequireSameShape(a, b, "CudaElementAddDevice");
     return OCudaElementAddDevice(a, b.GetData(), b.shape(), device_id);
@@ -485,5 +527,4 @@ void CudaRopeDevice(CudaTensor& q, CudaTensor& k, int pos,
         CheckKernel("RopeNeoXKernel: k");
     }
 }
-
 } // namespace yan_lamma

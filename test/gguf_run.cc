@@ -1,5 +1,6 @@
 // Manual interactive smoke runner: complete chat history is prefilled every turn.
 #include "include/batch.h"
+#include "include/backend.h"
 #include "include/chatsession.h"
 #include "include/context.h"
 #include "include/forward.h"
@@ -10,6 +11,7 @@
 #include "test/gguf_smoke_utils.h"
 
 #include <chrono>
+#include <charconv>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -21,8 +23,9 @@ using smoke::CheckLogits;
 using smoke::Require;
 
 void Usage(std::ostream& out) {
-    out << "usage: gguf_run <model.gguf> [n-predict]\n"
+    out << "usage: gguf_run <model.gguf> [n-predict] [--backend cpu|cuda] [--device N]\n"
            "  n-predict: positive per-turn token limit, default 16\n"
+           "  backend: cpu by default; --device requires --backend cuda\n"
            "  sampling: greedy (temperature=0, seed=42)\n"
            "  full history is prefilled on every turn; /help lists commands\n"
            "  linear weights: F32, Q8_0, Q4_0, Q4_1; converted by forward\n";
@@ -59,6 +62,7 @@ void RunTurn(Model& model, const GgufTokenizer& tokenizer, PromptBuild& builder,
         // max_context is the original model limit, independent of prior allocations.
         model.config.max_seq_len = static_cast<int>(tokens.size() + n_predict);
         Context context(&model);
+        ResetModelCudaRuntimeStats(model);
         Batch batch;
         Tensor logits;
         stage = "prefill";
@@ -132,7 +136,7 @@ int main(int argc, char** argv) {
         Usage(std::cout);
         return 0;
     }
-    if (argc < 2 || argc > 3) {
+    if (argc < 2) {
         Usage(std::cerr);
         return 1;
     }
@@ -140,12 +144,40 @@ int main(int argc, char** argv) {
     const char* stage = "arguments";
     try {
         int n_predict = 16;
-        if (argc == 3) {
-            const std::string value = argv[2];
-            std::size_t parsed = 0;
-            n_predict = std::stoi(value, &parsed);
-            Require(parsed == value.size() && n_predict > 0,
-                    "n-predict must be a positive integer");
+        bool limit_set = false;
+        BackendConfig backend;
+        for (int i = 2; i < argc; ++i) {
+            const std::string option = argv[i];
+            if (option == "--backend" || option == "--device") {
+                Require(i + 1 < argc, "Missing value for " + option);
+                const std::string value = argv[++i];
+                if (option == "--backend") {
+                    Require(ParseBackendKind(value, backend.kind),
+                            "Invalid --backend value: " + value);
+                } else {
+                    const auto parsed = std::from_chars(
+                        value.data(), value.data() + value.size(), backend.device_id);
+                    Require(parsed.ec == std::errc{} &&
+                                parsed.ptr == value.data() + value.size() &&
+                                backend.device_id >= 0,
+                            "Invalid --device value: " + value);
+                    backend.device_set = true;
+                }
+            } else {
+                Require(option.rfind("--", 0) != 0, "Unknown option: " + option);
+                Require(!limit_set, "Unexpected argument: " + option);
+                std::size_t parsed = 0;
+                n_predict = std::stoi(option, &parsed);
+                Require(parsed == option.size() && n_predict > 0,
+                        "n-predict must be a positive integer");
+                limit_set = true;
+            }
+        }
+        stage = "backend setup";
+        try {
+            VailedBackend(backend);
+        } catch (const std::exception& error) {
+            throw std::runtime_error(std::string("Backend setup failed: ") + error.what());
         }
         const std::string path = argv[1];
         stage = "model load";
@@ -164,11 +196,17 @@ int main(int argc, char** argv) {
         stage = "chat template load";
         PromptBuild builder;
         builder.SetChatTemplate(GetChatTemplate(path));
+        if (backend.kind == BackendKind::Kgpu) {
+            stage = "CUDA weight upload";
+            UploadModelWeightToCuda(model, backend.device_id);
+        }
+        ResetModelCudaRuntimeStats(model);
         ChatSession session;
         session.parma_.temperature = 0.0f;
         session.parma_.seed = 42;
         Sampler sampler(session.parma_);
         Terminal terminal;
+        PrintBackendSummary(backend, model, std::cout);
         terminal.PrintMessage("Chat ready. Type /help for commands; /exit or EOF to quit.");
         stage = "terminal input";
         while (true) {
@@ -188,8 +226,12 @@ int main(int argc, char** argv) {
                 if (command == "/help") terminal.PrintHelp();
                 else if (command == "/clear") {
                     session.Clear();
+                    ResetModelCudaRuntimeStats(model);
                     terminal.PrintMessage("Chat history and stats cleared.");
-                } else if (command == "/stats") terminal.PrintStats(session);
+                } else if (command == "/stats") {
+                    terminal.PrintStats(session);
+                    PrintBackendSummary(backend, model, std::cout);
+                }
                 else if (command == "/params" || command == "/parmas") {
                     terminal.PrintParams(session.parma_);
                 } else terminal.PrintMessage("Unknown command; type /help.");
