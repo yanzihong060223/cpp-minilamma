@@ -58,14 +58,18 @@ class BenchError(Exception):
         self.code = code
 
 
-def run_command(command, timeout, cwd=ROOT, input_text=None):
+def run_command(command, timeout, cwd=ROOT, input_text=None, extra_env=None):
     """Retain complete evidence and kill the process group on timeout."""
     argv = list(map(str, command))
     record = dict(command=argv, stdout='', stderr='', returncode=NA)
+    if extra_env:
+        # Archive only explicit overrides, never the inherited process environment.
+        record['environment'] = dict(extra_env)
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                   encoding='utf-8', errors='replace', start_new_session=(os.name == 'posix'))
+                                   encoding='utf-8', errors='replace', start_new_session=(os.name == 'posix'),
+                                   env=dict(os.environ, **extra_env) if extra_env else None)
         try:
             record['stdout'], record['stderr'] = process.communicate(input_text, timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -514,6 +518,8 @@ def main(argv=None):
         if not binary.is_file():
             raise BenchError(f'binary missing: {binary}')
         cases = matrix(args)
+        chat_model = next((case['model'] for case in cases if case['name'] == 'chat-cpu'), None)
+        test_env = {'MINI_LLAMA_CHAT_MODEL': chat_model} if chat_model else None
         baseline = json.loads(args.baseline.read_text(encoding='utf-8')) if args.baseline else {}
         if not isinstance(baseline, dict) or not isinstance(baseline.get('cases', []), list):
             raise BenchError('baseline must be a benchmark JSON object with cases[]')
@@ -529,7 +535,7 @@ def main(argv=None):
             command = ['ctest', '--test-dir', build_dir, '--output-on-failure', '-V']
             if pattern:
                 command += ['-R', pattern]
-            record = run_command(command, args.timeout)
+            record = run_command(command, args.timeout, extra_env=test_env)
             if record.get('error'):
                 data['ctests'].append(dict(record, name=name, status='failed', passed=NA, total=NA,
                                            failed=NA, skipped=NA, failed_tests=[], skipped_tests=[]))

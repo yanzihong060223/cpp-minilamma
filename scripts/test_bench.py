@@ -203,6 +203,17 @@ The following tests did not run:
         record = bench.run_command(['/missing/command'], 1)
         self.assertIn('cannot execute', record['error'])
 
+    def test_command_environment_override_is_local_and_archived(self):
+        variable = 'MINI_LLAMA_CHAT_MODEL'
+        with patch.dict(os.environ, {variable: '/old/default.gguf'}):
+            record = bench.run_command(
+                [sys.executable, '-c', 'import os; print(os.environ["MINI_LLAMA_CHAT_MODEL"])'],
+                10, extra_env={variable: '/selected/chat.gguf'})
+            bench.require_success(record)
+            self.assertEqual(record['stdout'].strip(), '/selected/chat.gguf')
+            self.assertEqual(record['environment'], {variable: '/selected/chat.gguf'})
+            self.assertEqual(os.environ[variable], '/old/default.gguf')
+
     def test_model_selection_and_errors(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -260,17 +271,30 @@ The following tests did not run:
             with patch.object(bench, 'run_command', side_effect=outside), contextlib.redirect_stderr(io.StringIO()) as errors:
                 env = bench.collect_env(BINARY.resolve(), BINARY.parent.resolve(), 30)
             self.assertEqual(env['commit'], bench.NA)
-            self.assertIn('not a git repository', errors.getvalue())
+            self.assertNotEqual(env['raw']['commit']['returncode'], 0)
+            self.assertNotEqual(env['raw']['branch']['returncode'], 0)
+            self.assertIn('commit: unavailable:', errors.getvalue())
+            self.assertIn('branch: unavailable:', errors.getvalue())
             self.assertIn('unavailable:', env['errors']['branch'])
 
     def test_fast_runs_tests_and_one_repeat(self):
         environment = dict(cuda_built=False, cuda_available=False)
-        def command(argv, timeout):
+        # This test checks orchestration against synthetic command results. Its
+        # matrix must also be synthetic, so no second/default Qwen is required
+        # when the real benchmark selects its models via --models-root.
+        cases = [dict(name=name, model='/fixture/' + name, backend='cpu', quant=quant,
+                      n_predict=4, repeats=[], metrics={}, ratios={}, warnings=[], convert=convert)
+                 for name, quant, convert in (('tiny-cpu', 'f32', False),
+                                              ('chat-cpu', 'q8_0', False),
+                                              ('tiny-q4_0-cpu', 'q4_0', True))]
+        def command(argv, timeout, extra_env=None):
             if argv[0] == 'ctest':
                 return dict(command=list(map(str, argv)), returncode=0, stderr='',
                             stdout='100% tests passed, 0 tests failed out of 7\n')
             return dict(command=list(map(str, argv)), returncode=0, stderr='', stdout=self.wire())
         with tempfile.TemporaryDirectory() as directory, patch.object(bench, 'collect_env', return_value=environment), \
+                patch.object(bench, 'matrix', return_value=cases), \
+                patch.object(bench, 'resolve_model', side_effect=AssertionError('unexpected real model lookup')) as resolve, \
                 patch.object(bench, 'run_command', side_effect=command) as commands, \
                 patch.object(bench, 'gpu_sample'), contextlib.redirect_stdout(io.StringIO()):
             out = Path(directory) / 'fast'
@@ -281,6 +305,13 @@ The following tests did not run:
             self.assertEqual(len(data['cases']), 3)
             self.assertTrue(all(len(case['repeats']) == 1 for case in data['cases']))
             self.assertEqual(commands.call_count, 5)
+            resolve.assert_not_called()
+            for call in commands.call_args_list[:2]:
+                self.assertEqual(call.kwargs['extra_env'], {'MINI_LLAMA_CHAT_MODEL': '/fixture/chat-cpu'})
+            for call in commands.call_args_list[2:]:
+                argv = call.args[0]
+                self.assertEqual(argv[argv.index('-n') + 1], 4)
+                self.assertEqual(argv[argv.index('--warmup') + 1], 2)
 
     def test_harness_archives_timeout_and_stops(self):
         with tempfile.TemporaryDirectory() as directory:

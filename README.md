@@ -384,6 +384,8 @@ Python 仅依赖标准库。默认模型是 `models/tiny` 与
 tiny 也接受完整的 model.json/model.bin。其他 GGUF 按 linear 的实际量化类型匹配，
 仍有歧义即报错，不下载或替换模型。矩阵为 tiny、chat、tiny 内存转换 Q4_0 各自的
 CPU/CUDA 两例；`--q4-model` 追加 Q4_0 GGUF 两例。`--skip-cuda` 仅筛选矩阵。
+编排器将选中的 chat 路径通过 `MINI_LLAMA_CHAT_MODEL` 传入两轮 CTest，
+使 chat smoke 与跑分使用同一模型；该环境覆盖保存在 CTest 原始记录中。
 
 默认 n=32、repeat=3、warmup=2、每条命令 timeout=600 秒。`--fast` 改为 n=4、repeat=1，
 不会跳过测试；跳过测试必须显式 `--skip-tests`，归档记为 not_run。
