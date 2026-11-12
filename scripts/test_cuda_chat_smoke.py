@@ -77,10 +77,25 @@ def main():
             require(result.returncode != 0, text)
             require("Backend setup failed:" in text, text)
             require("CUDA backend was not built" in text or "CUDA device" in text, text)
-            require(re.search(r"trace summary: trace_id=\S+ status=error", text), text)
+            if command == "bench":
+                require(result.stdout == "", text)
+            else:
+                require(re.search(r"trace summary: trace_id=\S+ status=error", text), text)
             print(f"PASS {command} CUDA unavailable contract")
             continue
         require(result.returncode == 0, text)
+        if command == "bench":
+            from bench import parse_stdout
+            metrics = parse_stdout(result.stdout, "cuda", True, 1)
+            q8 = metrics["cuda_q8_0_linear_weights"]
+            require(q8["uploaded"] == q8["total"] and q8["total"] > 0, text)
+            for key in ("cpu_attention_fallback", "h2d_copies"):
+                require(metrics[key] == 0, text)
+            for key in ("cuda_linear_calls", "cuda_attention_calls"):
+                require(metrics[key] > 0, text)
+            print(result.stdout, end="")
+            print("PASS bench CUDA execution")
+            continue
         for field in ("backend: cuda", "GGUF model loaded successfully", "compute: cuda linear",
                       "CUDA attention over GPU KV cache", "CPU sampler", "uploaded weights:",
                       "cuda f32 linear weights:", "cuda q8_0 linear weights:",
@@ -92,10 +107,6 @@ def main():
             require(field in result.stdout, text)
         for field in ("uploaded weights", "cuda q8_0 linear weights"):
             require(re.search(r"^" + re.escape(field) + r": [1-9]\d*$", result.stdout, re.M), text)
-        if command == "bench":
-            require("Benchmark:" in result.stdout and "tokens/s (total):" in result.stdout, text)
-            for field in ("cuda linear calls", "cuda attention calls"):
-                require(re.search(r"^" + field + r": [1-9]\d*$", result.stdout, re.M), text)
         for field in ("cpu attention fallback calls", "cpu linear fallback calls", "host->device copies", "host->device bytes"):
             require(re.search(r"^" + re.escape(field) + r": 0$", result.stdout, re.M), text)
         require(re.search(r"trace summary: trace_id=\S+ status=ok", text), text)

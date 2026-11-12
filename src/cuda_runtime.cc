@@ -5,12 +5,14 @@
 #include <sstream>
 #include <stdexcept>
 #include <utility>
+#include <algorithm>
 #ifdef MINI_LLAMA_USE_CUDA
 #include <cuda_runtime_api.h>
 #endif
 namespace yan_lamma {
 thread_local CudaModelWeights* internal::active_cuda_stats = nullptr;
 namespace {
+thread_local std::shared_ptr<CudaAllocationStats> active_allocations;
 #ifndef MINI_LLAMA_USE_CUDA
 std::runtime_error CudaNotBuiltError() {
        return std::runtime_error(
@@ -38,6 +40,13 @@ cudaMemcpyKind ToCudaMemcpyKind (CudaMemoryKind kind) {
 }
 #endif
 }// namespace
+CudaAllocationScope::CudaAllocationScope(std::shared_ptr<CudaAllocationStats> stats)
+    : previous_(std::move(active_allocations)) {
+    active_allocations = std::move(stats);
+}
+CudaAllocationScope::~CudaAllocationScope() {
+    active_allocations = std::move(previous_);
+}
 bool CudaRuntimeBuilt() {
     #ifdef  MINI_LLAMA_USE_CUDA
     return true;
@@ -154,7 +163,8 @@ void CudaMemcpy(void* des, const void* src, size_t bytes,  CudaMemoryKind kind) 
 CudaDeviceBuffer::CudaDeviceBuffer(CudaDeviceBuffer&& other) noexcept
     : data_(std::exchange(other.data_, nullptr)),
       byte_size_(std::exchange(other.byte_size_, 0)),
-      device_id_(std::exchange(other.device_id_, 0)) {}
+      device_id_(std::exchange(other.device_id_, 0)),
+      allocation_stats_(std::move(other.allocation_stats_)) {}
 
 CudaDeviceBuffer& CudaDeviceBuffer::operator=(CudaDeviceBuffer&& other) noexcept {
   if (this != &other) {
@@ -162,6 +172,7 @@ CudaDeviceBuffer& CudaDeviceBuffer::operator=(CudaDeviceBuffer&& other) noexcept
     data_ = std::exchange(other.data_, nullptr);
     byte_size_ = std::exchange(other.byte_size_, 0);
     device_id_ = std::exchange(other.device_id_, 0);
+    allocation_stats_ = std::move(other.allocation_stats_);
   }
   return *this;
 }
@@ -169,10 +180,12 @@ void CudaDeviceBuffer::ReSet() {
   if (data_ != nullptr) {
     SetCudaService(device_id_);
     CudaFreeMemory(data_);
+    if (allocation_stats_) allocation_stats_->current_bytes -= byte_size_;
   }
   data_ = nullptr;
   byte_size_ = 0;
   device_id_ = 0;
+  allocation_stats_.reset();
 }
 void CudaDeviceBuffer::Reset(size_t byte_size, int device_id) {
   ReSet();
@@ -184,6 +197,12 @@ void CudaDeviceBuffer::Reset(size_t byte_size, int device_id) {
    data_ = CudaMemory(byte_size);
    byte_size_ = byte_size;
    device_id_ = device_id;
+   allocation_stats_ = active_allocations;
+   if (allocation_stats_) {
+       allocation_stats_->current_bytes += byte_size;
+       allocation_stats_->peak_bytes = std::max(allocation_stats_->peak_bytes,
+                                                allocation_stats_->current_bytes);
+   }
 
 }
 CudaDeviceBuffer:: CudaDeviceBuffer(size_t byte_size, int device_id) {

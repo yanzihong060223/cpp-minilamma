@@ -132,8 +132,9 @@ def test_generate_stopping(cuda_available):
             FIXTURE.model_file(model, q8=True, eos=True)
             result = run("bench", model, "--backend", backend, "-p", "hello", "-n", 4)
             success(result)
-            trace(result, "ok")
-            require(field(result.stdout, "n_generate_tokens") == 4, output(result))
+            from bench import parse_stdout
+            metrics = parse_stdout(result.stdout, backend, "uploaded weights: unavailable\n" not in result.stdout, 4)
+            require(metrics["generated_tokens"] == 4, output(result))
             print(f"PASS bench {backend} fixed workload with EOS")
 
 
@@ -144,13 +145,14 @@ def main():
     require("compute: cpu" in result.stdout, output(result))
     for name in FIELDS:
         require(field(result.stdout, name) == 0, output(result))
-    generate_trace = trace(result, "ok")
+    trace(result, "ok")
     print("PASS generate CPU summary")
 
     result = run("bench", TINY, "--backend", "cpu", "-p", "hello", "-n", 1)
     success(result)
     require("tokens/s (total):" in result.stdout, output(result))
-    require(trace(result, "ok") != generate_trace, "trace_id reused")
+    from bench import parse_stdout
+    parse_stdout(result.stdout, "cpu", "uploaded weights: unavailable\n" not in result.stdout, 1)
     print("PASS bench CPU throughput")
 
     for args, message in (
@@ -187,17 +189,13 @@ def main():
     result = run("bench", TINY, "--backend", "cuda", "-p", "hello", "-n", 1, "--seed", 1)
     if available:
         success(result)
-        summary(result, "cuda")
-        for text in ("compute: cuda linear", "CUDA attention over GPU KV cache", "CPU sampler"):
-            require(text in result.stdout, output(result))
-        for name, expected in (("uploaded weights", 21), ("cuda f32 linear weights", 15),
-                               ("cuda linear calls", 90), ("cuda activation calls", 90),
-                               ("cuda attention calls", 12), ("cpu attention fallback calls", 0),
-                               ("cpu linear fallback calls", 0), ("host->device copies", 0),
-                               ("host->device bytes", 0), ("device->host copies", 6),
-                               ("device->host bytes", 6*524)):
-            require(field(result.stdout, name) == expected, f"{name} expected {expected}:\n{output(result)}")
-        trace(result, "ok")
+        metrics = parse_stdout(result.stdout, "cuda", True, 1)
+        for name, expected in (("uploaded_weights", 21), ("cuda_linear_calls", 90),
+                               ("cuda_activation_calls", 90), ("cuda_attention_calls", 12),
+                               ("cpu_attention_fallback", 0), ("h2d_copies", 0),
+                               ("d2h_copies", 6)):
+            require(metrics[name] == expected, f"{name}: {metrics}")
+        require(metrics["cuda_f32_linear_weights"] == dict(uploaded=15, total=15), output(result))
         print(result.stdout, end="")
         inspected = run("inspect", TINY, "--backend", "cuda")
         success(inspected)
@@ -205,7 +203,8 @@ def main():
         for name in FIELDS[5:]:
             require(field(inspected.stdout, name) == 0, output(inspected))
     else:
-        unavailable(result)
+        failure(result, "Backend setup failed:")
+        require(result.stdout == "", "strict failure must have empty stdout")
     print("PASS CUDA backend" + (" execution" if available else " unavailable contract"))
     test_generate_stopping(available)
     test_modes(available, built)

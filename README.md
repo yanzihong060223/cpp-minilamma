@@ -364,3 +364,100 @@ auto tokenizer = yan_lamma::GetGgufTokenizer("model.gguf");
 ```bash
 ctest --test-dir build -R 'GgufTokenizerExport|TokenizerFiles' --output-on-failure
 ```
+
+## Strict bench 与归档 harness
+
+只有 `bench` 显式携带 `--backend cpu|cuda` 时进入独立的 strict 路径。
+不带 backend 的旧 bench、generate、交互式 run 和 golden 入口保持原路径。
+
+```bash
+cmake --build build -j4
+./build/mini-llama bench models/tiny --backend cpu -p hello -n 4 --seed 1 --warmup 2
+python3 scripts/bench.py --build-dir build --skip-cuda --skip-tests --fast --out artifacts/bench
+# 执行定向和全量 CTest，再跑默认矩阵：
+python3 scripts/bench.py --build-dir build --out artifacts/bench-full
+```
+
+Python 仅依赖标准库。默认模型是 `models/tiny` 与
+`tools/model/chat/Qwen2-0.5B-Instruct-Q8_0.gguf`；显式 `--models-root` 从其
+`tiny`、`chat` 子目录解析。优先 tiny 的 `model.gguf`、chat 的上述精确文件名；
+tiny 也接受完整的 model.json/model.bin。其他 GGUF 按 linear 的实际量化类型匹配，
+仍有歧义即报错，不下载或替换模型。矩阵为 tiny、chat、tiny 内存转换 Q4_0 各自的
+CPU/CUDA 两例；`--q4-model` 追加 Q4_0 GGUF 两例。`--skip-cuda` 仅筛选矩阵。
+
+默认 n=32、repeat=3、warmup=2、每条命令 timeout=600 秒。`--fast` 改为 n=4、repeat=1，
+不会跳过测试；跳过测试必须显式 `--skip-tests`，归档记为 not_run。
+`--repeat`、`--baseline`、`--out` 是编排器参数；每次重复是独立实测进程。
+strict 接受 `--warmup`、`--quant q4_0`，以及 prompt、seed、threads、device、tokenizer、
+linear-mode 参数。重复 backend、非法 backend、缺模型均为错误。
+
+计时采用 steady_clock，只包围完整 prompt 的一次 ForwardBatch（prefill）和其后
+n−1 次单 token ForwardBatch（decode，逐次求和）；batch 构造与采样在计时外。
+固定生成 n≥1 个 token，EOS 与普通生成 token 一样继续后续前向，末个 token 不另加前向。
+容量校验为 prompt_tokens+n≤max_seq_len，不截断。每轮预热完整执行同一生成过程，
+实测使用新 KV 上下文和以相同 seed 初始化的 sampler；默认使用现有 greedy 参数。
+
+`total ms = prefill ms + decode ms`；total 吞吐为 1000*n/total_ms，decode 吞吐为
+1000*(n−1)/decode_ms。它们是前向吞吐，不含加载和采样，不称为端到端吞吐。
+load 累计加载、量化、上传、tokenize、实测上下文与 sampler 初始化；sampling 单列实测采样，
+两者均不含预热。n=1 时 decode 吞吐 unavailable；零分母同样 unavailable。
+
+strict 成功 stdout 恰好 23 行，每行 `key: value`，顺序为：
+
+```text
+prompt tokens
+generated tokens
+prefill ms
+decode ms
+total ms
+tokens/s (total)
+tokens/s (decode)
+uploaded weights
+gpu memory used
+cuda f32 linear weights
+cuda q8_0 linear weights
+cuda q4_0 linear weights
+cuda q4_1 linear weights
+cuda linear calls
+cuda activation calls
+cuda attention calls
+cpu attention fallback calls
+cuda kv write bytes
+cuda kv read bytes
+host->device copies
+device->host copies
+load ms
+sampling ms
+```
+
+prefill/decode/total、吞吐、显存为两位小数，load/sampling 为三位小数；使用小数点，
+无颜色或装饰。吞吐由未舍入时间计算，所以不从打印时间反算。显存 value 为 `X.XX MB`，
+MB=1,000,000 bytes；权重为 `a/b`（已上传该类型 linear / 模型该类型 linear 总量）；
+KV 为 `X (X bytes)`，copies 仅为整数。KV 是现有逻辑访问量，不是硬件内存流量。
+上传存量先快照，再重置运行 counters，随后实测；运行 counters 仅计前向。
+显存为本次 CUDA buffer 持有量峰值，含权重、KV、临时 buffer 及预热，不含库内部开销。
+
+CUDA 字段三态：未编译 CUDA 时第 8–21 行均为 unavailable；CUDA 构建的 CPU case 为
+零值（显存 `0.00 MB`、权重 `0/b`）；CUDA case 为实测值。失败 stdout 为空，诊断去 stderr；
+退出码 1 为参数/模型/环境错误，2 为容量不足，Python 的 3 为前置 CTest 失败。
+加载日志、verbose、trace 不进入 strict stdout。
+
+JSON 顶层为 env、ctests、cases、warnings。env.raw 保存环境命令 argv/stdout/stderr/returncode；
+缺失环境字段为 unavailable，errors 保存原因。GPU 时钟、温度、功耗有 before/after 两次样本。
+CTest 的 passed/total/failed/skipped 来自实际输出，跳过不计通过；任一失败停止矩阵。
+每个 case 的 repeats 保存每次 command/stdout/stderr/returncode/metrics；metrics 保存
+median/min/max，权重比例分别保存 uploaded/total 的三元组。三份产物共用一次聚合，
+repeat=1 时三值相同。baseline 按 name/model/backend/quant/n_predict 精确匹配，
+ratio=当前 median/基线 median；缺项或零基线为 unavailable。
+
+CSV 主列依次为：
+
+```text
+case,model,backend,quant,prompt_tokens,generated_tokens,prefill_ms,decode_ms,tokens_s_total,tokens_s_decode,uploaded_weights,gpu_mem_mb,h2d_copies,d2h_copies,cpu_attention_fallback,total_ms,load_ms,sampling_ms
+```
+
+随后按这些数值列顺序，各追加 `<列名>_min,<列名>_max`，主列取 median。
+Markdown 仅五段：环境表、CTest 结论、性能对比表、counters 表、原始 stdout 附录。
+仅 fallback>0、CUDA h2d>0、CUDA 权重上传 a<b 产生 WARN，逐次重复检查，
+由 Python stdout 和 Markdown 展示。CPU 的 `0/b` 不触发上传告警。
+没有 GPU 实测数据时 GPU 验收标注“未验证”。

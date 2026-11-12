@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <string>
+#include <memory>
 
 namespace yan_lamma {
 // 判断是否启用 Cuda 通过底层宏编译
@@ -29,6 +30,20 @@ void * CudaMemory(size_t byte_size);
 void CudaFreeMemory(void* ptr);
 //host device之间的数据拷贝
 void CudaMemcpy(void* des, const void* src, size_t bytes,  CudaMemoryKind kind);
+// Explicit run ownership. Buffers retain shared state across moves and releases.
+struct CudaAllocationStats {
+    size_t current_bytes = 0;
+    size_t peak_bytes = 0;
+};
+class CudaAllocationScope {
+ public:
+    explicit CudaAllocationScope(std::shared_ptr<CudaAllocationStats> stats);
+    ~CudaAllocationScope();
+    CudaAllocationScope(const CudaAllocationScope&) = delete;
+    CudaAllocationScope& operator=(const CudaAllocationScope&) = delete;
+ private:
+    std::shared_ptr<CudaAllocationStats> previous_;
+};
 class CudaDeviceBuffer {
  public:
     CudaDeviceBuffer() = default;
@@ -55,5 +70,6 @@ class CudaDeviceBuffer {
  void* data_ = nullptr;
  size_t byte_size_ = 0;
  int device_id_ = 0;
+ std::shared_ptr<CudaAllocationStats> allocation_stats_;
 };
 }//namespace yan_lamma

@@ -10,6 +10,16 @@
 #include <stdexcept>
 #include <utility>
 namespace yan_lamma {
+size_t ModelLinearWeightTypeTotals(const Model& model, QuantType type) {
+    size_t count = model.lm_head_.type == type ? 1 : 0;
+    for (const auto& layer : model.n_layers_) {
+        for (const auto* weight : {&layer.wq, &layer.wk, &layer.wv, &layer.wo,
+                                  &layer.w_gate, &layer.w_up, &layer.w_down}) {
+            if (weight->type == type) ++count;
+        }
+    }
+    return count;
+}
 namespace {
 size_t TensorBytes(const Tensor& tensor) {
     return sizeof(float) * tensor.GetDataSize();
