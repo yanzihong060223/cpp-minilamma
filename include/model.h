@@ -123,6 +123,8 @@ void UploadModelWeightToCuda(Model& model, int device_id);
 void ClearCudaWeight(Model& model);
 void ModeloQuanTensorQ80(Model& model);
 void ModeloQuanTensorQ40(Model& model);
+// Counts model linears, independently of backend and uploaded weight storage.
+size_t ModelLinearWeightTypeTotals(const Model& model, QuantType type);
 
 size_t ModelCudaLinearCpuFallbacks(const Model& model);
 size_t ModelCudaLinearCalls(const Model& model);                // Linear 调用次数

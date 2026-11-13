@@ -10,6 +10,16 @@
 #include <stdexcept>
 #include <utility>
 namespace yan_lamma {
+size_t ModelLinearWeightTypeTotals(const Model& model, QuantType type) {
+    size_t count = model.lm_head_.type == type ? 1 : 0;
+    for (const auto& layer : model.n_layers_) {
+        for (const auto* weight : {&layer.wq, &layer.wk, &layer.wv, &layer.wo,
+                                  &layer.w_gate, &layer.w_up, &layer.w_down}) {
+            if (weight->type == type) ++count;
+        }
+    }
+    return count;
+}
 namespace {
 size_t TensorBytes(const Tensor& tensor) {
     return sizeof(float) * tensor.GetDataSize();
@@ -149,7 +159,7 @@ void UploadTensorF32(CudaModelWeights& arry, int device_id, const std::string& n
     arry.uploaded_bytes +=  byte_size;
     arry.weights.push_back(std::move(weight));
 }
-void UploadLinearQ80(CudaModelWeights& arry, int device_id, const std::string name,  const QuanTensor& tensor) {
+void UploadLinearQ80(CudaModelWeights& arry, int device_id, const std::string& name,  const QuanTensor& tensor) {
     if (tensor.type != QuantType::kQ80) {
         return;
     }
@@ -191,7 +201,7 @@ void UploadLinearQ80(CudaModelWeights& arry, int device_id, const std::string na
     arry.uploaded_weight_count++;
     arry.weights.push_back(std::move(weight));
 }
-void UploadLinearQ40(CudaModelWeights& arry, int device_id, const std::string name,  const QuanTensor& tensor) {
+void UploadLinearQ40(CudaModelWeights& arry, int device_id, const std::string& name,  const QuanTensor& tensor) {
     if (tensor.type != QuantType::kQ40) {
         return;
     }
@@ -233,7 +243,7 @@ void UploadLinearQ40(CudaModelWeights& arry, int device_id, const std::string na
     arry.uploaded_weight_count++;
     arry.weights.push_back(std::move(weight));
 }
-void UploadLinearQ41(CudaModelWeights& arry, int device_id, const std::string name,  const QuanTensor& tensor) {
+void UploadLinearQ41(CudaModelWeights& arry, int device_id, const std::string& name,  const QuanTensor& tensor) {
     if (tensor.type != QuantType::kQ41) {
         return;
     }
@@ -275,7 +285,7 @@ void UploadLinearQ41(CudaModelWeights& arry, int device_id, const std::string na
     arry.uploaded_weight_count++;
     arry.weights.push_back(std::move(weight));
 }
-static void UploadLinear(CudaModelWeights& arry, int device_id, const std::string name,  const QuanTensor& tensor) {
+static void UploadLinear(CudaModelWeights& arry, int device_id, const std::string& name,  const QuanTensor& tensor) {
     UploadLinearF32(arry, device_id, name, tensor);
     if (tensor.type != QuantType::kF32 && tensor.type != QuantType::kQ80 &&
         tensor.type != QuantType::kQ40 && tensor.type != QuantType::kQ41) {

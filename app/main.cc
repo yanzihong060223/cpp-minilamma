@@ -1,4 +1,5 @@
 #include "app/backend_cli.h"
+#include "include/mini_llama/bench_strict.h"
 #include "include/betch_mark.h"
 #include "include/forward.h"
 #include "include/load.h"
@@ -22,6 +23,11 @@
 #include <system_error>
 
 int main(int argc, char** argv) {
+    if (argc >= 2 && std::string(argv[1]) == "bench") {
+        for (int i = 2; i < argc; ++i) {
+            if (std::string(argv[i]) == "--backend") return RunBenchStrict(argc, argv);
+        }
+    }
     if (UsesBackendCli(argc, argv)) return RunBackendCli(argc, argv);
     using namespace yan_lamma;
     namespace fs = std::filesystem;

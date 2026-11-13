@@ -17,3 +17,5 @@ __pycache__/
 
 /models/tiny/
 /artifacts/golden/
+/artifacts/bench-*
+/cppcheck.log

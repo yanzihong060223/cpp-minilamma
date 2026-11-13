@@ -57,7 +57,7 @@ if(MINI_LLAMA_CUDA)
     target_link_libraries(yan_minillama PUBLIC CUDA::cudart CUDA::cublas)
 endif()
 
-add_executable(mini-llama app/main.cc app/backend_cli.cc)
+add_executable(mini-llama app/main.cc app/backend_cli.cc src/bench_strict.cc)
 target_link_libraries(mini-llama PRIVATE yan_minillama)
 
 # The interactive runner is usable without enabling the legacy test suite.

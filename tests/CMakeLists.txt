@@ -40,3 +40,13 @@ foreach(script backend_cli cuda_chat_smoke)
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
     set_tests_properties(${case_name} PROPERTIES LABELS "cuda-validation" TIMEOUT 600)
 endforeach()
+
+add_executable(test_bench_counters test_bench_counters.cc)
+target_link_libraries(test_bench_counters PRIVATE yan_minillama)
+add_test(NAME strict-bench-counters COMMAND test_bench_counters
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+add_test(NAME strict-bench-harness
+    COMMAND ${CMAKE_COMMAND} -E env MINI_LLAMA_BIN=$<TARGET_FILE:mini-llama>
+        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/test_bench.py
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+set_tests_properties(strict-bench-counters strict-bench-harness PROPERTIES TIMEOUT 120)

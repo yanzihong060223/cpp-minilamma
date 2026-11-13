@@ -87,7 +87,7 @@ bool ForwaredLinearSupport (const QuanTensor& weight) {
         }
     return false;
 }
-bool ForwardLinearReady(const Model& model, const std::string name, QuantType type) {
+bool ForwardLinearReady(const Model& model, const std::string& name, QuantType type) {
     if (model.cuda_weights != nullptr) { 
         auto p = FindLoadWeight(model, name, type);
         if ( p != nullptr) {
@@ -96,7 +96,7 @@ bool ForwardLinearReady(const Model& model, const std::string name, QuantType ty
     }
     return false;
 }
-CudaTensor ForwardLinearDevice(const Model& model, const CudaTensor& x, const std::string name, const QuanTensor& tensor) {
+CudaTensor ForwardLinearDevice(const Model& model, const CudaTensor& x, const std::string& name, const QuanTensor& tensor) {
     if (!model.cuda_weights) {
         throw std::runtime_error("ForwardLinearDevice: CUDA weights are not loaded: " + name);
     }
@@ -161,7 +161,7 @@ void FowardQKVproject(const Model& model, CudaTensor& q, CudaTensor& k, CudaTens
     v = ForwardAddBiasDevice(model, std::move(v), prefix + "bv", layer_weight.bv);
 
 }
-CudaTensor ForwardRmsForm(const Model& model, CudaTensor& x, const std::string name, float eps) {
+CudaTensor ForwardRmsForm(const Model& model, CudaTensor& x, const std::string& name, float eps) {
     auto cuda_weight = model.cuda_weights;
     if (cuda_weight == nullptr) {
         throw std::runtime_error("ForwardRmsForm: CUDA weights are not loaded: " + name);
@@ -253,7 +253,7 @@ int n_kv_heads, int n_heads, int head_dim, int device_id, CudaCache& cache) {
         static_cast<size_t>(n_heads) * static_cast<size_t>(head_dim) * sizeof(float));
     return out;
 }
-CudaTensor ForwardffuDevice(const Model& model, const CudaTensor& h, const std::string layer_prefile, const LayerWeights& lw) {
+CudaTensor ForwardffuDevice(const Model& model, const CudaTensor& h, const std::string& layer_prefile, const LayerWeights& lw) {
    CudaTensor gate = ForwardLinearDevice(model, h, layer_prefile + "w_gate", lw.w_gate);
    CudaTensor up = ForwardLinearDevice(model, h, layer_prefile + "w_up", lw.w_up);
    CudaTensor silugate = CudaSiluDevice(gate, model.cuda_weights->device_id);
@@ -325,7 +325,7 @@ Tensor ForwardRmsNorm(const Model& model, const Tensor& x, const Tensor& weight,
     // cpu
     return RmsNorm(x, weight, eps);
 }
-void ForwardQKVProject(const Model& model, const std::string layer_prefix, const Tensor& h, const LayerWeights& weight, Tensor& q_float, Tensor& k_float, Tensor& v_float) {
+void ForwardQKVProject(const Model& model, const std::string& layer_prefix, const Tensor& h, const LayerWeights& weight, Tensor& q_float, Tensor& k_float, Tensor& v_float) {
     const std::string q_name = layer_prefix + "wq";
     const std::string k_name = layer_prefix + "wk";
     const std::string v_name = layer_prefix + "wv";
