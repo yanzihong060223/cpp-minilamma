@@ -512,7 +512,7 @@ std::string PromptBuild::BuildQwen2(const std::vector<ChatMessage>& message) {
     res += "<|im_start|>assistant\n";
     return res;
 }
-std::string PromptBuild ::Build(const std::vector<ChatMessage> message) {
+std::string PromptBuild ::Build(const std::vector<ChatMessage>& message) {
     if (chat_template.empty()) {
         return BuildPlain(message);
     }

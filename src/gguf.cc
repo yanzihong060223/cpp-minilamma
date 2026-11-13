@@ -346,7 +346,7 @@ bool ReadIntToString(std::ifstream& f, GgufValueType type, std::string& out) {
 // 读出按多少字节对齐
 uint32_t ParseAlignment(const std::vector<GgufMetadaKv>& metadata) {
   uint32_t res = kDefaultAlignment;
-  for (auto t : metadata) {
+  for (const auto& t : metadata) {
     if (t.name !=  "general.alignment") {
       continue;
     }
@@ -359,7 +359,7 @@ uint32_t ParseAlignment(const std::vector<GgufMetadaKv>& metadata) {
   }
   return res;
 }
-bool FindMatedaKey(std::ifstream& f, const std::string& path, const std::string key, GgufValueType& outtype) {
+bool FindMatedaKey(std::ifstream& f, const std::string& path, const std::string& key, GgufValueType& outtype) {
   f.open(path, std::ios::binary);
   if (!f.is_open()) {
       return false;

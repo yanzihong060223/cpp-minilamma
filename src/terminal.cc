@@ -21,7 +21,7 @@ void Terminal::PrintAssistantPrefix() {
     std::cout << "assistant  > ";
     std::cout.flush();
  }
-void Terminal::PrintTokenText(std::string text) {
+void Terminal::PrintTokenText(const std::string& text) {
     std::cout << text;
 }
 void Terminal::flush() {

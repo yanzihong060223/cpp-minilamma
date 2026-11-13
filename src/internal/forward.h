@@ -9,5 +9,5 @@ Tensor ForwardAttention(const Model& model, const Tensor& q, const Tensor& k,
     const Tensor& v, int layer, int pos, KvCache& cache,
     int n_heads, int n_kv_heads, int head_dim);
 CudaTensor ForwardLinearDevice(const Model& model, const CudaTensor& x,
-    const std::string name, const QuanTensor& tensor);
+    const std::string& name, const QuanTensor& tensor);
 }

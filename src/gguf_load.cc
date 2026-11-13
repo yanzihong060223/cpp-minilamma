@@ -101,7 +101,7 @@ std::vector<int> MapShape( const std::vector<uint64_t>& gguf_shape) {
     }
     return res;
 }
-QuanTensor LoadQuantTensor(const std::vector<uint8_t>& raw, const std::vector<int> shape, int gguf_type) {
+QuanTensor LoadQuantTensor(const std::vector<uint8_t>& raw, const std::vector<int>& shape, int gguf_type) {
     size_t num_elents = 1;
     for (auto dim: shape) {
         num_elents *= dim;

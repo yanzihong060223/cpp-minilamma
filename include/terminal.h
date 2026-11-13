@@ -14,7 +14,7 @@ public:
     //assistant >
     void PrintAssistantPrefix();
     // 不自动换行
-    void PrintTokenText(std::string text);
+    void PrintTokenText(const std::string& text);
     void flush();
     void NewLine();
     void PrintHelp();
