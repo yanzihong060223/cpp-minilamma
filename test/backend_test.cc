@@ -15,12 +15,16 @@ TEST(BackendTest, ParsesCpuAndGpu) {
     BackendKind kind = BackendKind::Kgpu;
     EXPECT_TRUE(ParseBackendKind("cpu", kind));
     EXPECT_EQ(kind, BackendKind::Kcpu);
-    EXPECT_TRUE(ParseBackendKind("gpu", kind));
-    EXPECT_EQ(kind, BackendKind::Kgpu);
+    for (const char* text : {"cuda", "gpu"}) {
+        SCOPED_TRACE(text);
+        kind = BackendKind::Kcpu;
+        EXPECT_TRUE(ParseBackendKind(text, kind));
+        EXPECT_EQ(kind, BackendKind::Kgpu);
+    }
 }
 
 TEST(BackendTest, InvalidTextLeavesKindUnchanged) {
-    for (const char* text : {"", "cuda", "auto", "CPU", "GPU", " cpu", "gpu ", "gpu\n"}) {
+    for (const char* text : {"", "auto", "CPU", "GPU", " cpu", "gpu ", "gpu\n"}) {
         SCOPED_TRACE(text);
         for (BackendKind original : {BackendKind::Kcpu, BackendKind::Kgpu}) {
             SCOPED_TRACE(BackendKindName(original));
@@ -33,7 +37,7 @@ TEST(BackendTest, InvalidTextLeavesKindUnchanged) {
 
 TEST(BackendTest, NamesKnownAndUnknownKinds) {
     EXPECT_EQ(BackendKindName(BackendKind::Kcpu), "cpu");
-    EXPECT_EQ(BackendKindName(BackendKind::Kgpu), "gpu");
+    EXPECT_EQ(BackendKindName(BackendKind::Kgpu), "cuda");
     EXPECT_EQ(BackendKindName(static_cast<BackendKind>(-1)), "unknown");
 }
 
@@ -54,7 +58,7 @@ TEST(BackendTest, CpuRejectsExplicitDeviceEvenWhenDeviceIsZero) {
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
         EXPECT_NE(message.find("--device"), std::string::npos);
-        EXPECT_NE(message.find("--backend gpu"), std::string::npos);
+        EXPECT_NE(message.find("--backend cuda"), std::string::npos);
     }
 }
 
@@ -109,9 +113,9 @@ TEST(BackendTest, ExecutionNotesDescribeCurrentSupport) {
 
     config.kind = BackendKind::Kgpu;
     const std::string gpu_note = BackendActivePath(config);
-    EXPECT_NE(gpu_note.find("gpu"), std::string::npos);
-    EXPECT_NE(gpu_note.find("runtime"), std::string::npos);
-    EXPECT_NE(gpu_note.find("not implemented"), std::string::npos);
+    EXPECT_NE(gpu_note.find("cuda linear"), std::string::npos);
+    EXPECT_NE(gpu_note.find("CUDA attention over GPU KV cache"), std::string::npos);
+    EXPECT_NE(gpu_note.find("CPU sampler"), std::string::npos);
 
     config.kind = static_cast<BackendKind>(-1);
     EXPECT_EQ(BackendActivePath(config), "unknown backend");
